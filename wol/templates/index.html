@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title>WOL</title>
+    <!-- Enable phone/tablet support -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- jQuery (necessary for Bootstrap's JavaScript plugins) -->
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.3/jquery.min.js"></script>
+    <!-- Latest compiled and minified CSS -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
+    <!-- Optional theme -->
+    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap-theme.min.css">
+    <!-- Latest compiled and minified JavaScript -->
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/js/bootstrap.min.js"></script>
+    <!-- Global style sheet -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="page-header">
+    <p>Wake On Lan</p>
+    </header>
+    <p>This Application is designed to turn on your computer from sleep or completely turned off using wake on lan
+        <br>
+    You will select your computer name from the drop down and click submit MacAddress</p>
+
+<form action="/mac" method="post">
+ <select name="macaddr">
+  <option value="mac addr here in capitals">PC name</option>
+ </select>
+  <input type="submit" value="Submit MacAddress">
+</form>
+
+<footer id="footer-buy">
+    <p>Created by Jay Townsend</p>
+    </footer>
+</body>
+</html>
