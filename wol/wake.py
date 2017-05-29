@@ -1,5 +1,5 @@
-#!/usr/bin/python3
-# Copyright Jay Townsend
+#!/usr/bin/env python3
+# Copyright Jay Townsend 2017
 
 from flask import Flask
 from flask import render_template
@@ -15,11 +15,11 @@ def homepage():
 
 
 @app.route('/mac', methods=['POST'])
-def mac():
+def send_mac():
     mac = request.form['macaddr']
     wol.send_magic_packet(mac)
-    return 'Your request has be sent to {}'.format(mac)
+    return render_template('mac.html', mac=mac)
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8088)
+    app.run(host='127.0.0.1', port=8080)

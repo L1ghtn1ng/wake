@@ -1,7 +1,7 @@
 /* Header style */
   .page-header{
-       	color: rgb(0, 155, 204);
-	font-size-adjust: 2; background: #000;
+        color: rgb(0, 155, 204);
+        font-size-adjust: 2; background: #000;
         height: auto;
         padding-bottom: 9px;
         margin: 0px;
@@ -16,31 +16,32 @@
     /* button style */
     button, input[type="button"], input[type="reset"], input[type="submit"] {
         cursor: pointer;
-        background: rgb(0, 155, 204) none repeat scroll 0% 0%;
-        margin: 0px;
+        background: rgb(0, 155, 204) none repeat scroll 0em 0em;
+        margin: 0em;
         border: none;
         color: rgb(255, 255, 255);
         border-radius: 0.7em;
         padding: 0.5%;
         -webkit-transform: scale(1);
-        transition: 0.4sec
+        transition-property: 0.4sec
         -webkit-transition: 0.4sec
         }
 
+    /* Button on hover style */
     button:hover, input[type="button"]:hover, input[type="reset"]:hover, input[type="submit"]:hover{
-           background:rgb(0, 79, 126);
-          transform: scale(1.05);
-          -webkit-transform: scale(1.05);
-          -webkit-transition: 0.4sec
-          transition: 0.4sec
+        background:rgb(0, 79, 126);
+        -webkit-transform: scale(1.05);
+        -webkit-transition: 0.4sec;
+        transition-duration: 0.4sec;
+
     }
-button, input, select, textarea {
-        font-family: inherit;
-        font-size: inherit;
-        line-height: inherit;
-        padding: 0.5%;
-        border-radius: 0.7em;
-        border: 1px solid black;
+button, input, select, textarea{
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    padding: 0.5%;
+    border-radius: 0.7em;
+    border: 1px solid black;
 }
     /* form style */
 form {
@@ -49,18 +50,35 @@ form {
 }
     /* Text size */
 p {
-    margin: 0px 0px 10px;
+    margin: 0 0 10px;
     font-size: 17px;
     padding-top: 10px;
+}
+
+    /* Drop Down Menu */
+.custom-select {
+    height: calc(2rem + 19px);
+    display: block;
+    margin-block-end: calc(.5rem + 1px);
+    max-width: 100%;
+    padding: .375rem 1.75rem .375rem .75rem;
+    line-height: 1.25;
+    color: #464a4c;
+    vertical-align: middle;
+    background: #fff url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 5'%3E%3Cpath fill='%23333' d='M2 0L0 2h4zm0 5L0 3h4z'/%3E%3C/svg%3E") no-repeat right .75rem center;
+    -webkit-background-size: 8px 10px;
+    border: 1px solid rgba(0,0,0,.15);
+    -moz-appearance: none;
+
+}
 
     /* Footer style */
-}
+
 #footer-buy  {
     position: absolute;
-    bottom: 0px;
+    bottom: 0;
     text-align: center;
     width: 100%;
-    background: rgb(0, 0, 0) none repeat scroll 0% 0%;
 }
 
     /* Footer text style */
