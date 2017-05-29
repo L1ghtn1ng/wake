@@ -13,7 +13,8 @@ copy and paste the following and under server name you will want to change it
 
 
 
-```<VirtualHost *:80>
+```
+<VirtualHost *:80>
         ServerName change me
         WSGIScriptAlias / /var/www/wol/wake.wsgi
         <Directory /var/www/wol/>
@@ -29,6 +30,7 @@ copy and paste the following and under server name you will want to change it
         LogLevel warn
         CustomLog ${APACHE_LOG_DIR}/access.log combined
 </VirtualHost>
+# vim: syntax=apache ts=4 sw=4 sts=4 sr noet
 ```
 
 You will want to clone this repository next
