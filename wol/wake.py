@@ -4,7 +4,7 @@
 from flask import Flask
 from flask import render_template
 from flask import request
-from wakeonlan import wol
+from wakeonlan import *
 
 app = Flask(__name__)
 
@@ -17,7 +17,7 @@ def homepage():
 @app.route('/mac', methods=['POST'])
 def send_mac():
     mac = request.form['macaddr']
-    wol.send_magic_packet(mac)
+    send_magic_packet(mac)
     return render_template('mac.html', mac=mac)
 
 
