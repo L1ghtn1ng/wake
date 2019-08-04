@@ -1,87 +1,43 @@
-/* Header style */
-  .page-header{
-        color: rgb(0, 155, 204);
-        font-size-adjust: 2; background: #000;
-        height: auto;
-        padding-bottom: 9px;
-        margin: 0px;
-        border-bottom: 1px solid rgb(238, 238, 238);
-        border-top: 0px none;
-        padding-top: 1%;
+ /* Button on hover style */
+    .btn:hover, input[type="button"]:hover, input[type="reset"]:hover, input[type="submit"]:hover{
+        background-color: #ee4b50;
     }
-    header img {
-        margin-left: 1%;
-    }
-
-    /* button style */
-    button, input[type="button"], input[type="reset"], input[type="submit"] {
-        cursor: pointer;
-        background: rgb(0, 155, 204) none repeat scroll 0em 0em;
-        margin: 0em;
-        border: none;
-        color: rgb(255, 255, 255);
-        border-radius: 0.7em;
-        padding: 0.5%;
-        -webkit-transform: scale(1);
-        transition-property: 0.4sec
-        -webkit-transition: 0.4sec
-        }
-
-    /* Button on hover style */
-    button:hover, input[type="button"]:hover, input[type="reset"]:hover, input[type="submit"]:hover{
-        background:rgb(0, 79, 126);
-        -webkit-transform: scale(1.05);
-        -webkit-transition: 0.4sec;
-        transition-duration: 0.4sec;
-
-    }
-button, input, select, textarea{
-    font-family: inherit;
-    font-size: inherit;
-    line-height: inherit;
-    padding: 0.5%;
-    border-radius: 0.7em;
-    border: 1px solid black;
-}
-    /* form style */
-form {
-    margin-left: 1%;
-    margin-top: 2%;
-}
-    /* Text size */
-p {
-    margin: 0 0 10px;
-    font-size: 17px;
-    padding-top: 10px;
-}
-
-    /* Drop Down Menu */
-.custom-select {
-    height: calc(2rem + 19px);
-    display: block;
-    margin-block-end: calc(.5rem + 1px);
-    max-width: 100%;
-    padding: .375rem 1.75rem .375rem .75rem;
-    line-height: 1.25;
-    color: #464a4c;
-    vertical-align: middle;
-    background: #fff url("data:image/svg+xml;charset=utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 4 5'%3E%3Cpath fill='%23333' d='M2 0L0 2h4zm0 5L0 3h4z'/%3E%3C/svg%3E") no-repeat right .75rem center;
-    -webkit-background-size: 8px 10px;
-    border: 1px solid rgba(0,0,0,.15);
-    -moz-appearance: none;
-
-}
-
-    /* Footer style */
-
-#footer-buy  {
-    position: absolute;
-    bottom: 0;
+    /* Button color */
+.btn, .btn-large, .btn-small {
+    text-decoration: none;
+    color: #fff;
+    background-color: #ee6e73;
     text-align: center;
-    width: 100%;
+    letter-spacing: .5px;
+}
+/*p {*/
+/*    margin: 0 0 10px;*/
+/*    font-size: 17px;*/
+/*    padding-top: 10px;*/
+/*}*/
+
+ /* Drop Down Menu */
+.select-wrapper input.select-dropdown {
+    position: relative;
+    cursor: pointer;
+    background-color: transparent;
+    color: #ee6e73;
 }
 
-    /* Footer text style */
-#footer-buy p {
-    color: rgb(0, 155, 204);
+.select-wrapper {
+    position: relative;
+    color-adjust: inherit;
+}
+/* End of Drop down menu section */
+
+ /* Footer layout */
+  body {
+    display: flex;
+    min-height: 100vh;
+    flex-direction: column;
+  }
+
+main {
+    flex: 1 0 auto;
+    background-color: #000000c4;
 }

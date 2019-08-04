@@ -3,32 +3,67 @@
 <head lang="en">
     <meta charset="UTF-8">
     <title>WOL</title>
-    <!-- Enable phone/tablet support -->
-    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-    <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-alpha.6/css/bootstrap.min.css" integrity="sha384-rwoIResjU2yc3z8GV/NPeZWAv56rSmLldC3R/AZzGRnGxQQKnKkoFVhFQhNUwEyJ" crossorigin="anonymous">
-    <!-- Global style sheet -->
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" integrity="sha256-OweaP/Ic6rsV+lysfyS4h+LM6sRwuO3euTYfr6M124g=" crossorigin="anonymous" />
     <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
-<header class="page-header">
-    <p>Wake On Lan</p>
-    </header>
-    <p>This Application is designed to turn on your computer from sleep or completely turned off using wake on lan
-     <br>You will select your computer name from the drop down and click submit MacAddress</p>
+<main>
+<nav>
+    <div class="nav-wrapper">
+      <a href="#" class="brand-logo">Wake</a>
+      <ul id="nav-mobile" class="right hide-on-med-and-down">
+      </ul>
+    </div>
+  </nav>
 
-<form action="/mac" method="post">
-    <select name="macaddr" class="custom-select">
-        <option value="Mac Here">PC Name Here</option>
-        <input type="submit" value="Submit MacAddress">
-</select>
-</form>
+ <div class="input-field col s12">
+    <select>
+      <option value="" disabled selected>Choose your computer</option>
+      {% for key, value in computers %}
+        <option value="{{ key }}">{{ value }}</option>
+      {% endfor %}
 
-<footer id="footer-buy">
-    &copy; Copyright 2016-Present By <a href="https://github.com/l1ghtn1ng/wake">Jay Townsend</a>
-    </footer>
-    <!-- BootStrap core JavaScript files -->
-    <script src="https://code.jquery.com/jquery-3.1.1.slim.min.js" integrity="sha384-A7FZj7v+d/sdmMqp/nOQwliLvUsJfDHW+k9Omg/a/EheAdgtzNs3hpfag6Ed950n" crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tether/1.4.0/js/tether.min.js" integrity="sha384-DztdAPBWPRXSA/3eYEEUWrWCy7G5KFbe8fFjk5JAIxUYHKkDx6Qin1DkWx51bBrb" crossorigin="anonymous"></script>
-    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0-alpha.6/js/bootstrap.min.js" integrity="sha384-vBWWzlZJ8ea9aCX4pEW3rVHjgjt7zpkNpZk+02D9phzyeVkE+jo0ieGizqPLForn" crossorigin="anonymous"></script>
-</body>
+    </select>
+    <label>Select Computer To Turn On</label>
+  </div>
+
+  <button class="btn waves-effect waves-light" type="submit" name="action">Submit
+    <i class="material-icons right">send</i>
+  </button>
+    <!-- materialize core JavaScript files -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.4.1/jquery.slim.min.js" integrity="sha256-pasqAKBDmFT4eHoN2ndd6lN370kFiGUFyTiUHWhU7k8=" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js" integrity="sha256-U/cHDMTIHCeMcvehBv1xQ052bPSbJtbuiw4QA9cTKz0=" crossorigin="anonymous"></script>
+    <script M.AutoInit(); ></script>
+    <script>
+        $(document).ready(function(){
+    $('select').formSelect();
+  });
+    </script>
+</main>
+
+<footer class="page-footer">
+    <div class="container">
+        <div class="row">
+            <div class="col l6 s12">
+                <h5 class="white-text">About  This App</h5>
+                <p class="grey-text text-lighten-4">This Application is designed to turn on your computer from sleep or completely turned off using wake on lan</p>
+              </div>
+              <div class="col l4 offset-l2 s12">
+                <h5 class="white-text">Links</h5>
+                <ul>
+                    <li><a class="grey-text text-lighten-3" href="https://github.com/L1ghtn1ng/wake/issues">Submit issues</a></li>
+                    <li><a class="grey-text text-lighten-3" href="https://twitter.com/jay_townsend1">Twitter</a></li>
+                    <li><a class="grey-text text-lighten-3" href="https://paypal.me/jaytownsend1">Donate</a></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+    <div class="footer-copyright">
+            <div class="container center-align">
+            &copy; <script type="text/JavaScript">document.write(new Date().getFullYear());</script> Copyright Jay Townsend
+            <a class="grey-text text-lighten-4 right" href="https://choosealicense.com/licenses/mit/">MIT License</a>
+            </div>
+          </div>
+</footer>
+
 </html>
