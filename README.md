@@ -45,17 +45,23 @@ the file
 * Python3
 * Flask
 * Wakeonlan
+* Pyyaml
 
 To install these you will need to install pip3 which you can do by ```apt-get install python3-pip```
 Then you will want to run
 
 * sudo pip3 install flask
 * sudo pip3 install wakeonlan
+* sudo pip3 install wakeonlan
+
+Or run ``sudo pip3 -r requirements.txt``
 
 # Adding your computers
-Under wol directory under templates, you will want to modify index.html
-On line 29 you will want to change ``html<option value="mac addr here in capitals">PC name</option>`` and if you want to add more computers
-just copy and paste that line. Once done save and exit the file
+Add your computers/servers to computers.yaml like the following;
+```yaml
+demo1: 30:5a:3a:56:57:58
+demo2: 28:c2:dd:g5:b3:e3
+```
 
 # Final Prep
 You are now ready to enable the wake.conf file under ```/etc/apache2/sites-available```

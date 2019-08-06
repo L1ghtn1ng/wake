@@ -17,10 +17,10 @@
   </nav>
 
  <div class="input-field col s12">
-    <select>
+    <select name="macaddr">
       <option value="" disabled selected>Choose your computer</option>
       {% for key, value in computers %}
-        <option value="{{ key }}">{{ value }}</option>
+        <option value="{{ value }}">{{ key }}</option>
       {% endfor %}
 
     </select>
@@ -36,8 +36,8 @@
     <script M.AutoInit(); ></script>
     <script>
         $(document).ready(function(){
-    $('select').formSelect();
-  });
+            $('select').formSelect();
+        });
     </script>
 </main>
 
