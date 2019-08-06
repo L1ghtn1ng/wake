@@ -16,13 +16,13 @@ copy and paste the following and under server name you will want to change it
 ```
 <VirtualHost *:80>
         ServerName change me
-        WSGIScriptAlias / /var/www/wol/wake.wsgi
-        <Directory /var/www/wol/>
+        WSGIScriptAlias / /var/www/html/wake/wake.wsgi
+        <Directory /var/www/html/wake/>
             Order allow,deny
             Allow from all
         </Directory>
-        Alias /static /var/www/wol/static
-        <Directory /var/www/wol/static/>
+        Alias /static /var/www/html/wake/static
+        <Directory /var/www/html/wake/static/>
             Order allow,deny
             Allow from all
         </Directory>
@@ -35,10 +35,9 @@ copy and paste the following and under server name you will want to change it
 
 You will want to clone this repository next
 
-* git clone https://github.com/L1ghtn1ng/wake.git wol
-* sudo cp -R wol/ /var/www/
+* git clone https://github.com/L1ghtn1ng/wake.git /var/www/html/
 
-You will want to under the wol directory open wake.wsgi that I have provided and change the secrect key. It says change me, after doing so save and exit
+You will want to under the wake directory open wake.wsgi that I have provided and change the secrect key. It says change me, after doing so save and exit
 the file
 
 # Dependencies
@@ -52,7 +51,7 @@ Then you will want to run
 
 * sudo pip3 install flask
 * sudo pip3 install wakeonlan
-* sudo pip3 install wakeonlan
+* sudo pip3 install Pyyaml
 
 Or run ``sudo pip3 -r requirements.txt``
 
