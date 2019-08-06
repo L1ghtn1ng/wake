@@ -41,7 +41,7 @@ You will want to under the wake directory open wake.wsgi that I have provided an
 the file
 
 # Dependencies
-* Python3
+* Python3.6+
 * Flask
 * Wakeonlan
 * Pyyaml

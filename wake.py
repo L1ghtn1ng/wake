@@ -2,7 +2,7 @@
 # Copyright Jay Townsend 2018-2019
 
 import yaml
-from collections import OrderedDict
+from os import getcwd
 from flask import Flask
 from flask import render_template
 from flask import request
@@ -14,7 +14,8 @@ app = Flask(__name__)
 class Computers:
     @staticmethod
     def config():
-        with open('computers.yaml', 'r') as computers:
+        cwd = getcwd()
+        with open(f'{cwd}computers.yaml', 'r') as computers:
             return yaml.safe_load(computers).items()
 
 
@@ -28,6 +29,7 @@ def send_mac():
     mac = request.form['macaddr']
     send_magic_packet(mac)
     return
+
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8080)
