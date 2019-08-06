@@ -15,7 +15,7 @@ class Computers:
     @staticmethod
     def config():
         cwd = getcwd()
-        with open(f'{cwd}/computers.yaml', 'r') as computers:
+        with open(f'{cwd}' + 'computers.yaml', 'r') as computers:
             return yaml.safe_load(computers).items()
 
 
