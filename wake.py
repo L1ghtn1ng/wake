@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 # Copyright Jay Townsend 2018-2019
 
+import sys
 import yaml
-from os import getcwd
 from flask import Flask
 from flask import render_template
 from flask import request
 from wakeonlan import *
 
+sys.path.insert(0, '/var/www/html/wake/')
 app = Flask(__name__)
 
 
 class Computers:
     @staticmethod
-    def config():
-        cwd = getcwd()
-        with open(f'{cwd}computers.yaml', 'r') as computers:
+    def config() -> dict:
+        with open('computers.yaml', 'r') as computers:
             return yaml.safe_load(computers).items()
 
 
