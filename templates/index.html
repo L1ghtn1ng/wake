@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <title>WOL</title>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" integrity="sha256-OweaP/Ic6rsV+lysfyS4h+LM6sRwuO3euTYfr6M124g=" crossorigin="anonymous" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" integrity="sha256-OweaP/Ic6rsV+lysfyS4h+LM6sRwuO3euTYfr6M124g=" crossorigin="anonymous"/>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <main>
@@ -17,12 +17,11 @@
   </nav>
 
  <div class="input-field col s12">
-    <select name="macaddr">
+    <select id="macaddr" name="macaddr">
       <option value="" disabled selected>Choose your computer</option>
       {% for key, value in computers %}
         <option value="{{ value }}">{{ key }}</option>
       {% endfor %}
-
     </select>
     <label>Select Computer To Turn On</label>
   </div>
@@ -47,23 +46,23 @@
             <div class="col l6 s12">
                 <h5 class="white-text">About  This App</h5>
                 <p class="grey-text text-lighten-4">This Application is designed to turn on your computer from sleep or completely turned off using wake on lan</p>
-              </div>
-              <div class="col l4 offset-l2 s12">
+            </div>
+            <div class="col l4 offset-l2 s12">
                 <h5 class="white-text">Links</h5>
                 <ul>
                     <li><a class="grey-text text-lighten-3" href="https://github.com/L1ghtn1ng/wake/issues">Submit issues</a></li>
                     <li><a class="grey-text text-lighten-3" href="https://twitter.com/jay_townsend1">Twitter</a></li>
                     <li><a class="grey-text text-lighten-3" href="https://paypal.me/jaytownsend1">Donate</a></li>
                 </ul>
-              </div>
             </div>
-          </div>
+        </div>
+    </div>
     <div class="footer-copyright">
-            <div class="container center-align">
+        <div class="container center-align">
             &copy; <script type="text/JavaScript">document.write(new Date().getFullYear());</script> Copyright Jay Townsend
             <a class="grey-text text-lighten-4 right" href="https://choosealicense.com/licenses/mit/">MIT License</a>
-            </div>
-          </div>
+        </div>
+    </div>
 </footer>
 
 </html>

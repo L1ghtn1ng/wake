@@ -10,11 +10,7 @@
     text-align: center;
     letter-spacing: .5px;
 }
-/*p {*/
-/*    margin: 0 0 10px;*/
-/*    font-size: 17px;*/
-/*    padding-top: 10px;*/
-/*}*/
+
 
  /* Drop Down Menu */
 .select-wrapper input.select-dropdown {
@@ -40,4 +36,9 @@
 main {
     flex: 1 0 auto;
     background-color: #000000c4;
+}
+
+/* Nav colour */
+ .bg-red-400 {
+     background-color: #ee6e73;
 }
