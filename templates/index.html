@@ -17,27 +17,18 @@
   </nav>
 
  <div class="input-field col s12">
-    <select id="macaddr" name="macaddr">
+    <select id="macaddr" method="post">
       <option value="" disabled selected>Choose your computer</option>
       {% for key, value in computers %}
         <option value="{{ value }}">{{ key }}</option>
       {% endfor %}
     </select>
     <label>Select Computer To Turn On</label>
-  </div>
 
   <button class="btn waves-effect waves-light" type="submit" name="action">Submit
     <i class="material-icons right">send</i>
   </button>
-    <!-- materialize core JavaScript files -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.4.1/jquery.slim.min.js" integrity="sha256-pasqAKBDmFT4eHoN2ndd6lN370kFiGUFyTiUHWhU7k8=" crossorigin="anonymous"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js" integrity="sha256-U/cHDMTIHCeMcvehBv1xQ052bPSbJtbuiw4QA9cTKz0=" crossorigin="anonymous"></script>
-    <script M.AutoInit(); ></script>
-    <script>
-        $(document).ready(function(){
-            $('select').formSelect();
-        });
-    </script>
+ </div>
 </main>
 
 <footer class="page-footer">
@@ -65,4 +56,14 @@
     </div>
 </footer>
 
+<!-- materialize core JavaScript files -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.4.1/jquery.slim.min.js" integrity="sha256-pasqAKBDmFT4eHoN2ndd6lN370kFiGUFyTiUHWhU7k8=" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js" integrity="sha256-U/cHDMTIHCeMcvehBv1xQ052bPSbJtbuiw4QA9cTKz0=" crossorigin="anonymous"></script>
+<script M.AutoInit(); ></script>
+<!-- Inital load of the select form -->
+<script language="javascript" type="text/javascript">
+    $(document).ready(function(){
+        $('select').formSelect();
+    });
+</script>
 </html>
