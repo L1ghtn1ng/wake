@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright Jay Townsend 2018-2019
+# Copyright Jay Townsend 2018-2020
 
 import yaml
 from flask import Flask, redirect, url_for
@@ -22,12 +22,11 @@ def homepage():
     return render_template('index.html', computers=Computers.config())
 
 
-@app.route('/mac', methods=['POST'])
+@app.route('/', methods=['POST'])
 def send_mac():
-    mac = request.data[0]
-    t = send_magic_packet(mac)
-    print(t)
-    return redirect(url_for('index'))
+    mac = request.form.get('macaddr')
+    send_magic_packet(mac)
+    return redirect(url_for('homepage'))
 
 
 if __name__ == '__main__':

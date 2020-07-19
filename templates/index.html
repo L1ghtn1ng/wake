@@ -17,19 +17,21 @@
     </div>
   </nav>
 
- <div class="input-field col s12">
-    <select name="macaddr">
-      <option value="" disabled selected>Choose your computer</option>
-      {% for key, value in computers %}
-        <option value="{{ value }}">{{ key }}</option>
-      {% endfor %}
-    </select>
-    <label>Select Computer To Turn On</label>
+<form method="POST">
+    <div class="input-field col s12">
+        <select name="macaddr">
+            <option value="" disabled selected>Choose your computer</option>
+            {% for key, value in computers %}
+                <option value="{{ value }}">{{ key }}</option>
+            {% endfor %}
+        </select>
+        <label>Select Computer To Turn On</label>
 
-  <button class="btn waves-effect waves-light" type="submit" name="action">Submit
-    <i class="material-icons right">send</i>
-  </button>
- </div>
+        <button class="btn waves-effect waves-light" type="submit" name="action">Submit
+            <i class="material-icons right">send</i>
+        </button>
+    </div>
+</form>
 </main>
 
 <footer class="page-footer">

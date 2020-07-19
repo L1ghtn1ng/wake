@@ -1,8 +1,9 @@
- /* Button on hover style */
-    .btn:hover, input[type="button"]:hover, input[type="reset"]:hover, input[type="submit"]:hover{
+/* Button on hover style */
+.btn:hover, input[type="button"]:hover, input[type="reset"]:hover, input[type="submit"]:hover{
         background-color: #ee4b50;
-    }
-    /* Button color */
+}
+
+/* Button color */
 .btn, .btn-large, .btn-small {
     text-decoration: none;
     color: #fff;
@@ -12,7 +13,7 @@
 }
 
 
- /* Drop Down Menu */
+/* Drop Down Menu */
 .select-wrapper input.select-dropdown {
     position: relative;
     cursor: pointer;
@@ -24,28 +25,28 @@
     position: relative;
 }
 
- .dropdown-content li > a, .dropdown-content li > span {
-     font-size: 16px;
-     color: #9e9e9e;
-     background-color: #000000c4;
-     display: block;
-     line-height: 22px;
-     padding: 14px 16px;
- }
+.dropdown-content li > a, .dropdown-content li > span {
+    font-size: 16px;
+    color: #9e9e9e;
+    background-color: #000000c4;
+    display: block;
+    line-height: 22px;
+    padding: 14px 16px;
+}
 
- .select-dropdown li.disabled, .select-dropdown li.disabled > span, .select-dropdown li.optgroup {
-     color: #9e9e9e;
-     background-color: #393939;
- }
+.select-dropdown li.disabled, .select-dropdown li.disabled > span, .select-dropdown li.optgroup {
+    color: #9e9e9e;
+    background-color: #393939;
+}
 
 /* End of Drop down menu section */
 
- /* Footer layout */
- body {
+/* Footer layout */
+body {
     display: flex;
     min-height: 100vh;
     flex-direction: column;
- }
+}
 
 main {
     flex: 1 0 auto;
@@ -53,6 +54,6 @@ main {
 }
 
 /* Nav colour */
- .bg-red-400 {
-     background-color: #ee6e73;
- }
+.bg-red-400 {
+    background-color: #ee6e73;
+}
