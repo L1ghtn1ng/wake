@@ -39,6 +39,10 @@
     background-color: #393939;
 }
 
+.input-field.col label {
+    left: 0.1rem;
+}
+
 /* End of Drop down menu section */
 
 /* Footer layout */
