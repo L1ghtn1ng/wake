@@ -3,6 +3,7 @@
 <head lang="en">
     <meta charset="UTF-8">
     <title>WOL</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" integrity="sha512-UJfAaOlIRtdR+0P6C3KUoTDAxVTuy3lnSXLyLKlHYJlcSU8Juge/mjeaxDNMlw9LgeIotgz5FP8eUQPhX1q10A==" crossorigin="anonymous" />
     <link rel="stylesheet" href="/static/style.css">
@@ -17,7 +18,7 @@
   </nav>
 
  <div class="input-field col s12">
-    <select id="macaddr" method="post">
+    <select name="macaddr">
       <option value="" disabled selected>Choose your computer</option>
       {% for key, value in computers %}
         <option value="{{ value }}">{{ key }}</option>
@@ -56,11 +57,11 @@
     </div>
 </footer>
 
-<!-- materialize core JavaScript files -->
+<!-- Materialize core JavaScript files -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.5.1/jquery.slim.min.js" integrity="sha512-/DXTXr6nQodMUiq+IUJYCt2PPOUjrHJ9wFrqpJ3XkgPNOZVfMok7cRw6CSxyCQxXn6ozlESsSh1/sMCTF1rL/g==" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js" integrity="sha512-NiWqa2rceHnN3Z5j6mSAvbwwg3tiwVNxiAQaaSMSXnRRDh5C2mk/+sKQRw8qjV1vN4nf8iK2a0b048PnHbyx+Q==" crossorigin="anonymous"></script>
 <script M.AutoInit(); ></script>
-<!-- Inital load of the select form -->
+<!-- Load of the select form -->
 <script language="javascript" type="text/javascript">
     $(document).ready(function(){
         $('select').formSelect();
