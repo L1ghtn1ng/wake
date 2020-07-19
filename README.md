@@ -18,13 +18,11 @@ copy and paste the following and under server name you will want to change it
         ServerName change me
         WSGIScriptAlias / /var/www/html/wake/wake.wsgi
         <Directory /var/www/html/wake/>
-            Order allow,deny
-            Allow from all
+            Require all granted
         </Directory>
         Alias /static /var/www/html/wake/static
         <Directory /var/www/html/wake/static/>
-            Order allow,deny
-            Allow from all
+            Require all granted
         </Directory>
         ErrorLog ${APACHE_LOG_DIR}/error.log
         LogLevel warn
@@ -37,7 +35,7 @@ You will want to clone this repository next
 
 * git clone https://github.com/L1ghtn1ng/wake.git /var/www/html/
 
-You will want to under the wake directory open wake.wsgi that I have provided and change the secrect key. It says change me, after doing so save and exit
+You will want to under the wake directory open wake.wsgi that I have provided and change the secret key. It says change me, after doing so save and exit
 the file
 
 # Dependencies
