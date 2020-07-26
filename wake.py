@@ -6,7 +6,6 @@ from flask import Flask, redirect, url_for
 from flask import render_template
 from flask import request
 from wakeonlan import *
-from os import getcwd
 
 app = Flask(__name__)
 
@@ -14,8 +13,12 @@ app = Flask(__name__)
 class Computers:
     @staticmethod
     def config() -> dict:
-        with open(getcwd() + '/computers.yaml', 'r') as computers:
-            return yaml.safe_load(computers).items()
+        try:
+            with open('computers.yaml', 'r') as computers:
+                return yaml.safe_load(computers).items()
+        except FileNotFoundError:
+            with open('/var/www/html/wake/computers.yaml', 'r') as computers:
+                return yaml.safe_load(computers).items()
 
 
 @app.route('/', methods=['GET'])
