@@ -11,8 +11,16 @@ app = Flask(__name__)
 
 
 class Computers:
+    """
+    class to house the things relating to computer related things
+    """
     @staticmethod
     def config() -> dict:
+        """
+        method that reads the computers.yaml file and to make it available
+        in the html via jinja2 templating
+        :return: dict
+        """
         try:
             with open('computers.yaml', 'r') as computers:
                 return yaml.safe_load(computers).items()
@@ -23,11 +31,20 @@ class Computers:
 
 @app.route('/', methods=['GET'])
 def homepage():
+    """
+    main webpage of the app
+    :return:
+    """
     return render_template('index.html', computers=Computers.config())
 
 
 @app.route('/', methods=['POST'])
 def send_mac():
+    """
+    function that sends the magic packet to turn your
+    computer on via wake on lan and does it as a post request
+    :return:
+    """
     mac = request.form.get('macaddr')
     send_magic_packet(mac)
     return redirect(url_for('homepage'))
