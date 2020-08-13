@@ -2,7 +2,7 @@
 # Copyright Jay Townsend 2018-2020
 
 import yaml
-from flask import Flask, redirect, url_for
+from flask import Flask, redirect, url_for, make_response, after_this_request
 from flask import render_template
 from flask import request
 from wakeonlan import *
@@ -35,7 +35,12 @@ def homepage():
     main webpage of the app
     :return:
     """
-    return render_template('index.html', computers=Computers.config())
+    response = make_response(render_template('index.html', computers=Computers.config()))
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+    response.headers['Feature-Policy'] = 'none'
+    response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @app.route('/', methods=['POST'])
@@ -47,6 +52,20 @@ def send_mac():
     """
     mac = request.form.get('macaddr')
     send_magic_packet(mac)
+
+    @after_this_request
+    def add_header(response):
+        """
+        Allows setting server headers after doing a POST request
+        as doing it the same way for the homepage() breaks sending the MAC addr
+        :param response:
+        :return:
+        """
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
+        response.headers['Feature-Policy'] = 'none'
+        response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        return response
     return redirect(url_for('homepage'))
 
 
