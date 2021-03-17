@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright Jay Townsend 2018-2020
+# Copyright Jay Townsend 2018-2021
 
 import yaml
 from flask import Flask, redirect, url_for, make_response, after_this_request
@@ -37,7 +37,7 @@ def homepage():
     """
     response = make_response(render_template('index.html', computers=Computers.config()))
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    response.headers['Feature-Policy'] = 'none'
+    response.headers['Permissions-Policy'] = 'none'
     response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
@@ -62,7 +62,7 @@ def send_mac():
         :return:
         """
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-        response.headers['Feature-Policy'] = 'none'
+        response.headers['Permissions-Policy'] = 'none'
         response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         return response
