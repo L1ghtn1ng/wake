@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright Jay Townsend 2018-2021
+# Copyright Jay Townsend 2018-2022
 
 import yaml
 from flask import Flask, redirect, url_for, make_response, after_this_request

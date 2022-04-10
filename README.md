@@ -35,9 +35,6 @@ You will want to clone this repository next
 
 * git clone https://github.com/L1ghtn1ng/wake.git /var/www/html/
 
-You will want to under the wake directory open wake.wsgi that I have provided and change the secret key. It says change me, after doing so save and exit
-the file
-
 # Dependencies
 * Python3.6+
 * Flask

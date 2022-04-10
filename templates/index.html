@@ -4,69 +4,70 @@
     <meta charset="UTF-8">
     <title>WOL</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css" integrity="sha512-UJfAaOlIRtdR+0P6C3KUoTDAxVTuy3lnSXLyLKlHYJlcSU8Juge/mjeaxDNMlw9LgeIotgz5FP8eUQPhX1q10A==" crossorigin="anonymous" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.1.1/css/all.min.css" integrity="sha512-KfkfwYDsLkIlwQp6LFnl8zNdLGxu9YAA1QvwINks4PhcElQSvqcyVLLD9aMhXd13uQjoXtEKNosOWaZqXgel0g==" crossorigin="anonymous" referrerpolicy="no-referrer"/>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous" referrerpolicy="no-referrer"/>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <main>
-<nav>
-    <div class="nav-wrapper">
-      <a href="#" class="brand-logo">Wake</a>
-      <ul id="nav-mobile" class="right hide-on-med-and-down">
-      </ul>
-    </div>
-  </nav>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Wake</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNavAltMarkup" aria-controls="navbarNavAltMarkup" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNavAltMarkup">
+                <div class="navbar-nav">
+{#                    <a class="nav-link active" aria-current="page" href="#">Home</a>#}
+                </div>
+            </div>
+        </div>
+    </nav>
 
 <form method="POST">
-    <div class="input-field col s12">
-        <select name="macaddr">
-            <option value="" disabled selected>Choose your computer</option>
-            {% for key, value in computers %}
-                <option value="{{ value }}">{{ key }}</option>
-            {% endfor %}
-        </select>
-        <label>Select Computer To Turn On</label>
-
-        <button class="btn waves-effect waves-light" type="submit" name="action">Submit
-            <i class="material-icons right">send</i>
-        </button>
-    </div>
+    <select class="form-select form-select-mb" name="macaddr">
+        <option value="" disabled selected>Choose your computer</option>
+        {% for key, value in computers %}
+            <option value="{{ value }}">{{ key }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-dark btn-rounded">Power On</button>
 </form>
 </main>
 
-<footer class="page-footer">
-    <div class="container">
-        <div class="row">
-            <div class="col l6 s12">
-                <h5 class="white-text">About  This App</h5>
-                <p class="grey-text text-lighten-4">This Application is designed to turn on your computer from sleep or completely turned off using wake on lan</p>
-            </div>
-            <div class="col l4 offset-l2 s12">
-                <h5 class="white-text">Links</h5>
-                <ul>
-                    <li><a class="grey-text text-lighten-3" href="https://github.com/L1ghtn1ng/wake/issues">Submit issues</a></li>
-                    <li><a class="grey-text text-lighten-3" href="https://twitter.com/jay_townsend1">Twitter</a></li>
-                    <li><a class="grey-text text-lighten-3" href="https://paypal.me/jaytownsend1">Donate</a></li>
-                </ul>
-            </div>
+<footer class="bg-dark text-center text-white">
+    <!-- Grid container -->
+    <div class="container p-4 pb-0">
+        <!-- Section: Social media -->
+        <section class="mb-4">
+                <!-- Twitter -->
+                <a class="btn btn-outline-dark btn-floating m-1" href="https://twitter.com/jay_townsend1" role="button"
+                ><i class="fab fa-twitter"></i
+                ></a>
+                <!-- Github -->
+                <a class="btn btn-outline-dark btn-floating m-1" href="https://github.com/L1ghtn1ng/wake" role="button"
+                ><i class="fab fa-github"></i
+                ></a>
+                <!-- Github -->
+                <a class="btn btn-outline-dark btn-floating m-1" href="https://paypal.me/jaytownsend1" role="button"
+                ><i class="fab fa-paypal"></i
+                ></a>
+            </section>
+            <!-- Section: Social media -->
         </div>
-    </div>
-    <div class="footer-copyright">
-        <div class="container center-align">
-            &copy; <script type="text/JavaScript">document.write(new Date().getFullYear());</script> Copyright Jay Townsend
-            <a class="grey-text text-lighten-4 right" href="https://choosealicense.com/licenses/mit/">MIT License</a>
+        <!-- Copyright -->
+        <div class="text-center p-3" style="background-color: rgba(0, 0, 0, 0.2);">
+            &copy; <script type="text/JavaScript">document.write(new Date().getFullYear());</script> Copyright
+            <a class="text-white" href="#">Jay Townsend</a>
         </div>
-    </div>
-</footer>
+    </footer>
 
-<!-- Materialize core JavaScript files -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.slim.min.js" integrity="sha512-6ORWJX/LrnSjBzwefdNUyLCMTIsGoNP6NftMy2UAm1JBm6PRZCO1d7OHBStWpVFZLO+RerTvqX/Z9mBFfCJZ4A==" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/js/materialize.min.js" integrity="sha512-NiWqa2rceHnN3Z5j6mSAvbwwg3tiwVNxiAQaaSMSXnRRDh5C2mk/+sKQRw8qjV1vN4nf8iK2a0b048PnHbyx+Q==" crossorigin="anonymous"></script>
-<script M.AutoInit(); ></script>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-ka7Sk0Gln4gmtz2MlQnikT1wXgYsOg+OMhuP+IlRH9sENBO0LRn5q+8nbTov4+1p" crossorigin="anonymous"></script>
+{#<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.slim.min.js" integrity="sha512-6ORWJX/LrnSjBzwefdNUyLCMTIsGoNP6NftMy2UAm1JBm6PRZCO1d7OHBStWpVFZLO+RerTvqX/Z9mBFfCJZ4A==" crossorigin="anonymous"></script>#}
 <!-- Load of the select form -->
-<script type="text/javascript">
-    $(document).ready(function(){
-        $('select').formSelect();
-    });
-</script>
+{#<script type="text/javascript">#}
+{#    $(document).ready(function(){#}
+{#        $('select').formSelect();#}
+{#    });#}
 </html>
