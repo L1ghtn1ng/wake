@@ -37,7 +37,7 @@ def homepage():
     """
     response = make_response(render_template('index.html', computers=Computers.config()))
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    response.headers['Permissions-Policy'] = 'none'
+    response.headers['Permissions-Policy'] = 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()'
     response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     return response
@@ -62,7 +62,7 @@ def send_mac():
         :return:
         """
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-        response.headers['Permissions-Policy'] = 'none'
+        response.headers['Permissions-Policy'] = 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()'
         response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         return response
