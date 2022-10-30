@@ -6,6 +6,8 @@ from flask import Flask, redirect, url_for, make_response, after_this_request
 from flask import render_template
 from flask import request
 from wakeonlan import *
+from flask.wrappers import Response
+from werkzeug.wrappers.response import Response
 
 app = Flask(__name__)
 
@@ -30,7 +32,7 @@ class Computers:
 
 
 @app.route('/', methods=['GET'])
-def homepage():
+def homepage() -> Response:
     """
     main webpage of the app
     :return:
@@ -44,7 +46,7 @@ def homepage():
 
 
 @app.route('/', methods=['POST'])
-def send_mac():
+def send_mac() -> Response:
     """
     function that sends the magic packet to turn your
     computer on via wake on lan and does it as a post request
