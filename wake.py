@@ -6,7 +6,6 @@ from flask import Flask, redirect, url_for, make_response, after_this_request
 from flask import render_template
 from flask import request
 from wakeonlan import *
-from flask.wrappers import Response
 from werkzeug.wrappers.response import Response
 
 app = Flask(__name__)
