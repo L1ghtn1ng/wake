@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright Jay Townsend 2018-2022
+# Copyright Jay Townsend 2018-2023
 
 import yaml
 from flask import Flask, redirect, url_for, make_response, after_this_request
@@ -52,7 +52,7 @@ def send_mac() -> Response:
     :return:
     """
     mac = request.form.get('macaddr')
-    send_magic_packet(mac)
+    send_magic_packet(str(mac))
 
     @after_this_request
     def add_header(response):
