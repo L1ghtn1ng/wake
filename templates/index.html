@@ -1,15 +1,20 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <title>WOL</title>
+    <title>Wake</title>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
+    <link rel="manifest" href="/static/site.webmanifest">
+    <link rel="mask-icon" href="/static/safari-pinned-tab.svg" color="#5bbad5">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.2.1/css/all.min.css" integrity="sha512-MV7K8+y+gLIBoVD59lQIYicR65iaqukzvf/nwasF0nqhPay5w/9lJmVM2hMDcnK1OnMGCdVK+iQrJ7lzPJQd1w==" crossorigin="anonymous" referrerpolicy="no-referrer"/>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.2.3/css/bootstrap.min.css" integrity="sha512-SbiR/eusphKoMVVXysTKG/7VseWii+Y3FdHrt0EpKgpToZeemhqHeZeLWLhJutz/2ut2Vw1uQEj2MbRF+TVBUA==" crossorigin="anonymous" referrerpolicy="no-referrer"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0-alpha1/css/bootstrap.min.css" integrity="sha512-72OVeAaPeV8n3BdZj7hOkaPSEk/uwpDkaGyP4W2jSzAC8tfiO4LMEDWoL3uFp5mcZu+8Eehb4GhZWFwvrss69Q==" crossorigin="anonymous" referrerpolicy="no-referrer"/>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <main>
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+    <nav class="navbar navbar-expand-lg">
         <div class="container-fluid">
             <a class="navbar-brand" href="#">Wake</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNavAltMarkup" aria-controls="navbarNavAltMarkup" aria-expanded="false" aria-label="Toggle navigation">
@@ -30,25 +35,25 @@
             <option value="{{ value }}">{{ key }}</option>
         {% endfor %}
     </select>
-    <button type="submit" class="btn btn-dark btn-rounded">Power On</button>
+    <button type="submit" class="btn btn-rounded">Power On</button>
 </form>
 </main>
 
-<footer class="bg-dark text-center text-white">
+<footer class="text-center text-white">
     <!-- Grid container -->
     <div class="container p-4 pb-0">
         <!-- Section: Social media -->
         <section class="mb-4">
                 <!-- Twitter -->
-                <a class="btn btn-outline-dark btn-floating m-1" href="https://twitter.com/jay_townsend1" role="button"
+                <a class="btn btn-floating m-1" href="https://twitter.com/jay_townsend1" role="button"
                 ><i class="fab fa-twitter"></i
                 ></a>
                 <!-- Github -->
-                <a class="btn btn-outline-dark btn-floating m-1" href="https://github.com/L1ghtn1ng/wake" role="button"
+                <a class="btn btn-floating m-1" href="https://github.com/L1ghtn1ng/wake" role="button"
                 ><i class="fab fa-github"></i
                 ></a>
                 <!-- Github -->
-                <a class="btn btn-outline-dark btn-floating m-1" href="https://paypal.me/jaytownsend1" role="button"
+                <a class="btn btn-floating m-1" href="https://paypal.me/jaytownsend1" role="button"
                 ><i class="fab fa-paypal"></i
                 ></a>
             </section>
@@ -63,5 +68,5 @@
 
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.2.3/js/bootstrap.min.js" integrity="sha512-1/RvZTcCDEUjY/CypiMz+iqqtaoQfAITmNSJY17Myp4Ms5mdxPS5UV7iOfdZoxcGhzFbOm6sntTKJppjvuhg4g==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0-alpha1/js/bootstrap.min.js" integrity="sha512-eHx4nbBTkIr2i0m9SANm/cczPESd0DUEcfl84JpIuutE6oDxPhXvskMR08Wmvmfx5wUpVjlWdi82G5YLvqqJdA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </html>

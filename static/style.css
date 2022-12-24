@@ -7,7 +7,7 @@
 .btn, .btn-large, .btn-small {
     text-decoration: none;
     color: #fff;
-    background-color: #212529;
+    background-color: #37373a;
     text-align: center;
     letter-spacing: .5px;
     border-radius: .50rem;
@@ -78,5 +78,5 @@ body {
 
 main {
     flex: 1 0 auto;
-    background-color: #000000c4;
+    /*background-color: #000000c4;*/
 }
