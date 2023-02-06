@@ -1,6 +1,6 @@
 Flask==2.2.2
 wakeonlan==3.0.0
-mypy==0.991
+mypy==1.0.0
 PyYaml==6.0
 pyre-check==0.9.17
 pip==23.0
