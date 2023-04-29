@@ -3,6 +3,6 @@ wakeonlan==3.0.0
 mypy==1.2.0
 PyYaml==6.0
 pyre-check==0.9.18
-pip==23.1.1
+pip==23.1.2
 Werkzeug==2.3.2
 types-PyYAML==6.0.12.9
