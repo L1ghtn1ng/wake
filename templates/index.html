@@ -14,29 +14,16 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <main>
-    <nav class="navbar navbar-expand-lg">
-        <div class="container-fluid">
-            <a class="navbar-brand" href="#">Wake</a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNavAltMarkup" aria-controls="navbarNavAltMarkup" aria-expanded="false" aria-label="Toggle navigation">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNavAltMarkup">
-                <div class="navbar-nav">
-{#                    <a class="nav-link active" aria-current="page" href="#">Home</a>#}
-                </div>
-            </div>
-        </div>
-    </nav>
-
-<form method="POST">
-    <select class="form-select form-select-mb" name="macaddr">
-        <option value="" disabled selected>Choose your computer</option>
-        {% for key, value in computers %}
-            <option value="{{ value }}">{{ key }}</option>
-        {% endfor %}
-    </select>
-    <button type="submit" class="btn btn-rounded">Power On</button>
-</form>
+  <h2>Wake</h2>
+  <form method="POST">
+      <select class="form-select form-select-mb" name="macaddr">
+          <option hidden>Choose computer</option>
+          {% for key, value in computers %}
+              <option value="{{ value }}">{{ key }}</option>
+          {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-rounded">Power On</button>
+  </form>
 </main>
 
 <footer class="text-center text-white">
