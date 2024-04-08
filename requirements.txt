@@ -1,4 +1,4 @@
-Flask==3.0.2
+Flask==3.0.3
 wakeonlan==3.1.0
 mypy==1.9.0
 PyYaml==6.0.1
