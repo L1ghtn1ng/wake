@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-# Copyright Jay Townsend 2018-2023
+# Copyright Jay Townsend 2018-2025
 
 import yaml
-from flask import Flask, redirect, url_for, make_response, after_this_request
-from flask import render_template
-from flask import request
+from flask import Flask, after_this_request, make_response, redirect, render_template, request, url_for
 from wakeonlan import *
 from werkzeug.wrappers.response import Response
 
@@ -19,14 +17,14 @@ class Computers:
     def config() -> dict:
         """
         method that reads the computers.yaml file and to make it available
-        in the html via jinja2 templating
+        in the HTML via jinja2 templating
         :return: dict
         """
         try:
-            with open('computers.yaml', 'r') as computers:
+            with open('computers.yaml') as computers:
                 return yaml.safe_load(computers).items()
         except FileNotFoundError:
-            with open('/var/www/html/wake/computers.yaml', 'r') as computers:
+            with open('/var/www/html/wake/computers.yaml') as computers:
                 return yaml.safe_load(computers).items()
 
 
@@ -49,7 +47,7 @@ def homepage() -> Response:
 def send_mac() -> Response:
     """
     function that sends the magic packet to turn your
-    computer on via wake on lan and does it as a post request
+    computer on via wake on lan and does it as a post-request
     :return:
     """
     mac = request.form.get('macaddr')
