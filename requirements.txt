@@ -1,6 +1,6 @@
 Flask==3.1.0
 wakeonlan==3.1.0
-mypy==1.13.0
+mypy==1.14.1
 PyYaml==6.0.2
 pip==24.3.1
 Werkzeug==3.1.3
