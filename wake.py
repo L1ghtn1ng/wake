@@ -13,6 +13,7 @@ class Computers:
     """
     class to house the things relating to computer related things
     """
+
     @staticmethod
     def config() -> dict:
         """
@@ -36,10 +37,14 @@ def homepage() -> Response:
     """
     response = make_response(render_template('index.html', computers=Computers.config()))
     response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    response.headers['Permissions-Policy'] = 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()'
+    response.headers['Permissions-Policy'] = (
+        'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()'
+    )
     response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
     response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['Content-Security-Policy'] = "default-src 'self' cdnjs.cloudflare.com 'report-sample'; script-src 'self' 'sha256-ajGjo5eD0JzFPdnpuutKT6Sb5gLu+Q9ru594rwJogGQ=' cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' 'sha256-ajGjo5eD0JzFPdnpuutKT6Sb5gLu+Q9ru594rwJogGQ=' cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; style-src 'self' cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'"
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self' cdnjs.cloudflare.com 'report-sample'; script-src 'self' 'sha256-ajGjo5eD0JzFPdnpuutKT6Sb5gLu+Q9ru594rwJogGQ=' cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' 'sha256-ajGjo5eD0JzFPdnpuutKT6Sb5gLu+Q9ru594rwJogGQ=' cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; style-src 'self' cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'"
+    )
     return response
 
 
@@ -62,11 +67,16 @@ def send_mac() -> Response:
         :return:
         """
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-        response.headers['Permissions-Policy'] = 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()'
+        response.headers['Permissions-Policy'] = (
+            'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()'
+        )
         response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
         response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['Content-Security-Policy'] = "default-src 'self' cdnjs.cloudflare.com 'report-sample'; script-src 'self' 'sha256-ajGjo5eD0JzFPdnpuutKT6Sb5gLu+Q9ru594rwJogGQ=' cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' 'sha256-ajGjo5eD0JzFPdnpuutKT6Sb5gLu+Q9ru594rwJogGQ=' cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; style-src 'self' cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'"
+        response.headers['Content-Security-Policy'] = (
+            "default-src 'self' cdnjs.cloudflare.com 'report-sample'; script-src 'self' 'sha256-ajGjo5eD0JzFPdnpuutKT6Sb5gLu+Q9ru594rwJogGQ=' cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' 'sha256-ajGjo5eD0JzFPdnpuutKT6Sb5gLu+Q9ru594rwJogGQ=' cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; style-src 'self' cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'"
+        )
         return response
+
     return redirect(url_for('homepage'))
 
 
