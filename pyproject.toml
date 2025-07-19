@@ -36,6 +36,16 @@ dev = [
     "types-PyYAML==6.0.12.20250516",
     "ruff==0.12.4",
 ]
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+ignore_missing_imports = true
+show_traceback = true
+show_error_codes = true
+namespace_packages = true
+
+[tool.uv]
+python-preference = "managed"
 
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
