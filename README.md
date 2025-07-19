@@ -36,19 +36,28 @@ You will want to clone this repository next
 * git clone https://github.com/L1ghtn1ng/wake.git /var/www/html/
 
 # Dependencies
-* Python3.6+
+* Python 3.11+
 * Flask
 * Wakeonlan
-* Pyyaml
+* PyYAML
 
-To install these you will need to install pip3 which you can do by ```apt-get install python3-pip```
-Then you will want to run
+This project uses [uv](https://docs.astral.sh/uv/) for dependency management. To install uv:
 
-* sudo pip3 install flask
-* sudo pip3 install wakeonlan
-* sudo pip3 install Pyyaml
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-Or run ``sudo pip3 -r requirements.txt``
+Then install the project dependencies:
+
+```bash
+uv sync
+```
+
+To run the application in development mode:
+
+```bash
+uv run python wake.py
+```
 
 # Adding your computers
 Add your computers/servers to computers.yaml like the following;
