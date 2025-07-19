@@ -40,12 +40,12 @@ function checkStatus() {
 }
 
 // Function to update status display for a computer
-function updateStatusDisplay(computerName, isOnline) {
+function updateStatusDisplay(computerName, status) {
     const statusDot = document.getElementById(`dot-${computerName}`);
     const statusText = document.getElementById(`text-${computerName}`);
     
     if (statusDot && statusText) {
-        if (isOnline) {
+        if (status === 'UP') {
             statusDot.style.color = '#28a745'; // Green
             statusText.textContent = 'Online';
             statusText.style.color = '#28a745';

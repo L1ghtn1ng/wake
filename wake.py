@@ -30,11 +30,11 @@ class Computers:
                 return yaml.safe_load(computers).items()
 
     @staticmethod
-    def check_status(ip: str) -> bool:
+    def check_status(ip: str) -> str:
         """
         Check if a computer is up by pinging its IP address
         :param ip: IP address to ping
-        :return: True if computer is up, False otherwise
+        :return: "UP" if computer is up, "DOWN" otherwise
         """
         try:
             # Use ping command with timeout of 3 seconds and 1 packet
@@ -44,9 +44,9 @@ class Computers:
                 text=True,
                 timeout=5
             )
-            return result.returncode == 0
+            return "UP" if result.returncode == 0 else "DOWN"
         except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-            return False
+            return "DOWN"
 
     @staticmethod
     def get_all_statuses() -> dict:
@@ -60,7 +60,7 @@ class Computers:
             if isinstance(config, dict) and 'ip' in config:
                 statuses[name] = Computers.check_status(config['ip'])
             else:
-                statuses[name] = False
+                statuses[name] = "DOWN"
         return statuses
 
 
