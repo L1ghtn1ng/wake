@@ -62,8 +62,12 @@ uv run python wake.py
 # Adding your computers
 Add your computers/servers to computers.yaml like the following;
 ```yaml
-demo1: 30:5a:3a:56:57:58
-demo2: 28:c2:dd:g5:b3:e3
+demo1:
+  mac: 30:5a:3a:56:57:58
+  ip: 10.0.0.2
+demo2:
+  mac: e0:d4:e8:98:42:11
+  ip: 10.0.0.254
 ```
 
 # Final Prep
