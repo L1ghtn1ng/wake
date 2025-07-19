@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Copyright Jay Townsend 2018-2025
 
+import subprocess
 import yaml
-from flask import Flask, after_this_request, make_response, redirect, render_template, request, url_for
+from flask import Flask, after_this_request, jsonify, make_response, redirect, render_template, request, url_for
 from wakeonlan import *
 from werkzeug.wrappers.response import Response
 
@@ -27,6 +28,40 @@ class Computers:
         except FileNotFoundError:
             with open('/var/www/html/wake/computers.yaml') as computers:
                 return yaml.safe_load(computers).items()
+
+    @staticmethod
+    def check_status(ip: str) -> bool:
+        """
+        Check if a computer is up by pinging its IP address
+        :param ip: IP address to ping
+        :return: True if computer is up, False otherwise
+        """
+        try:
+            # Use ping command with timeout of 3 seconds and 1 packet
+            result = subprocess.run(
+                ['ping', '-c', '1', '-W', '3', ip],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+            return False
+
+    @staticmethod
+    def get_all_statuses() -> dict:
+        """
+        Get status of all computers
+        :return: dict with computer names as keys and status as values
+        """
+        computers = dict(Computers.config())
+        statuses = {}
+        for name, config in computers.items():
+            if isinstance(config, dict) and 'ip' in config:
+                statuses[name] = Computers.check_status(config['ip'])
+            else:
+                statuses[name] = False
+        return statuses
 
 
 @app.route('/', methods=['GET'])
@@ -55,8 +90,17 @@ def send_mac() -> Response:
     computer on via wake on lan and does it as a post-request
     :return:
     """
-    mac = request.form.get('macaddr')
-    send_magic_packet(str(mac))
+    computer_name = request.form.get('computer')
+    computers = dict(Computers.config())
+    
+    if computer_name in computers:
+        computer_config = computers[computer_name]
+        if isinstance(computer_config, dict) and 'mac' in computer_config:
+            mac = computer_config['mac']
+        else:
+            # Fallback for old format
+            mac = computer_config
+        send_magic_packet(str(mac))
 
     @after_this_request
     def add_header(response):
@@ -78,6 +122,16 @@ def send_mac() -> Response:
         return response
 
     return redirect(url_for('homepage'))
+
+
+@app.route('/status', methods=['GET'])
+def get_status():
+    """
+    API endpoint to get the status of all computers
+    :return: JSON response with computer statuses
+    """
+    statuses = Computers.get_all_statuses()
+    return jsonify(statuses)
 
 
 if __name__ == '__main__':

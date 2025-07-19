@@ -16,14 +16,30 @@
 <main>
   <h2>Wake</h2>
   <form method="POST">
-      <select class="form-select form-select-mb" name="macaddr">
+      <select class="form-select form-select-mb" name="computer" id="computerSelect">
           <option hidden>Choose computer</option>
           {% for key, value in computers %}
-              <option value="{{ value }}">{{ key }}</option>
+              <option value="{{ key }}">
+                  <span class="status-indicator" id="status-{{ key }}">●</span> {{ key }}
+              </option>
           {% endfor %}
       </select>
       <button type="submit" class="btn btn-rounded">Power On</button>
   </form>
+  
+  <div class="status-section">
+      <h5>Computer Status</h5>
+      <div id="status-list">
+          {% for key, value in computers %}
+              <div class="status-item">
+                  <span class="status-dot" id="dot-{{ key }}">●</span>
+                  <span class="computer-name">{{ key }}</span>
+                  <span class="status-text" id="text-{{ key }}">Checking...</span>
+              </div>
+          {% endfor %}
+      </div>
+      <button type="button" class="btn btn-secondary btn-sm" id="refresh-status-btn">Refresh Status</button>
+  </div>
 </main>
 
 <footer class="text-center text-white">

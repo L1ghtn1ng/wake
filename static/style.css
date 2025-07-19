@@ -233,3 +233,81 @@ footer a.text-white:hover {
   color: #4a6bff !important;
   text-decoration: underline;
 }
+
+/* Status indicators styling */
+.status-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  background-color: rgba(30, 30, 40, 0.5);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  transition: all 0.3s ease;
+  border: 1px solid rgba(58, 86, 212, 0.2);
+}
+
+.status-item:hover {
+  background-color: rgba(30, 30, 40, 0.8);
+  border-color: rgba(58, 86, 212, 0.4);
+}
+
+.status-dot {
+  font-size: 1.2rem;
+  margin-right: 12px;
+  transition: color 0.3s ease;
+  text-shadow: 0 0 5px currentColor;
+}
+
+.computer-name {
+  font-weight: 500;
+  color: #ffffff;
+  margin-right: auto;
+  font-size: 1rem;
+}
+
+.status-text {
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: color 0.3s ease;
+  padding: 4px;
+}
+
+#status-list {
+  max-width: 500px;
+  width: 100%;
+  margin: 1rem 0;
+}
+
+.status-section {
+  background-color: rgba(30, 30, 40, 0.7);
+  padding: 1.5rem;
+  border-radius: 1rem;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(10px);
+  margin-top: 2rem;
+  animation: fadeInUp 0.8s ease-out forwards;
+}
+
+.status-section h5 {
+  color: #ffffff;
+  margin-bottom: 1rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* Responsive design for status items */
+@media (max-width: 768px) {
+  .status-item {
+    padding: 6px 12px;
+  }
+  
+  .computer-name {
+    font-size: 0.9rem;
+  }
+  
+  .status-text {
+    font-size: 0.8rem;
+  }
+}
