@@ -34,7 +34,7 @@ dependencies = [
 dev = [
     "mypy==1.17.0",
     "types-PyYAML==6.0.12.20250516",
-    "ruff==0.12.4",
+    "ruff==0.12.6",
 ]
 [tool.mypy]
 python_version = "3.12"
