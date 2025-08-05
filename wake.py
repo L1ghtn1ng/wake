@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # Copyright Jay Townsend 2018-2025
+import asyncio
+from typing import ClassVar
 
-import subprocess
 import yaml
 from flask import Flask, after_this_request, jsonify, make_response, redirect, render_template, request, url_for
 from wakeonlan import *
@@ -9,128 +10,101 @@ from werkzeug.wrappers.response import Response
 
 app = Flask(__name__)
 
+# Security headers that are common between routes
+SECURITY_HEADERS = {
+    'Permissions-Policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()',
+    'Referrer-Policy': 'no-referrer-when-downgrade',
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net 'report-sample'; script-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; frame-ancestors 'self'; style-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'",
+}
+
 
 class Computers:
-    """
-    class to house the things relating to computer related things
-    """
+    """Class to handle computer-related operations"""
+
+    YAML_PATHS: ClassVar = ['computers.yaml', '/var/www/html/wake/computers.yaml']
+    PING_TIMEOUT = 5
+    PING_COUNT = '1'
+    PING_WAIT = '3'
 
     @staticmethod
     def config() -> dict:
-        """
-        method that reads the computers.yaml file and to make it available
-        in the HTML via jinja2 templating
-        :return: dict
-        """
-        try:
-            with open('computers.yaml') as computers:
-                return yaml.safe_load(computers).items()
-        except FileNotFoundError:
-            with open('/var/www/html/wake/computers.yaml') as computers:
-                return yaml.safe_load(computers).items()
+        """Read and parse computer configuration from the YAML file"""
+        for path in Computers.YAML_PATHS:
+            try:
+                with open(path) as computers:
+                    return yaml.safe_load(computers).items()
+            except FileNotFoundError:
+                continue
+        return {}
 
     @staticmethod
-    def check_status(ip: str) -> str:
-        """
-        Check if a computer is up by pinging its IP address
-        :param ip: IP address to ping
-        :return: "UP" if computer is up, "DOWN" otherwise
-        """
+    async def check_status(ip: str) -> str:
+        """Async version of check_status"""
+        cmd = ['ping', '-c', Computers.PING_COUNT, '-W', Computers.PING_WAIT, ip]
         try:
-            # Use ping command with timeout of 3 seconds and 1 packet
-            result = subprocess.run(
-                ['ping', '-c', '1', '-W', '3', ip],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            return "UP" if result.returncode == 0 else "DOWN"
-        except (subprocess.TimeoutExpired, subprocess.SubprocessError):
-            return "DOWN"
+            process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            await asyncio.wait_for(process.wait(), timeout=Computers.PING_TIMEOUT)
+            return 'UP' if process.returncode == 0 else 'DOWN'
+        except (TimeoutError, Exception):
+            return 'DOWN'
 
     @staticmethod
-    def get_all_statuses() -> dict:
-        """
-        Get status of all computers
-        :return: dict with computer names as keys and status as values
-        """
+    async def get_all_statuses() -> dict[str, str]:
+        """Get status of all configured computers asynchronously"""
         computers = dict(Computers.config())
-        statuses = {}
+
+        tasks = []
         for name, config in computers.items():
             if isinstance(config, dict) and 'ip' in config:
-                statuses[name] = Computers.check_status(config['ip'])
+                task = asyncio.create_task(Computers.check_status(config['ip']))
+                tasks.append((name, task))
             else:
-                statuses[name] = "DOWN"
-        return statuses
+                tasks.append((name, asyncio.create_task(asyncio.coroutine(lambda: 'DOWN')())))
+
+        results = {}
+        for name, task in tasks:
+            results[name] = await task
+
+        return results
+
+
+def apply_security_headers(response: Response) -> Response:
+    """Apply security headers to response"""
+    for header, value in SECURITY_HEADERS.items():
+        response.headers[header] = value
+    return response
 
 
 @app.route('/', methods=['GET'])
 def homepage() -> Response:
-    """
-    main webpage of the app
-    :return:
-    """
+    """Render main webpage"""
     response = make_response(render_template('index.html', computers=Computers.config()))
-    response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-    response.headers['Permissions-Policy'] = (
-        'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()'
-    )
-    response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['Content-Security-Policy'] = (
-        "default-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net 'report-sample'; script-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; style-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'"
-    )
-    return response
+    return apply_security_headers(response)
 
 
 @app.route('/', methods=['POST'])
 def send_mac() -> Response:
-    """
-    function that sends the magic packet to turn your
-    computer on via wake on lan and does it as a post-request
-    :return:
-    """
+    """Handle wake-on-lan request"""
     computer_name = request.form.get('computer')
     computers = dict(Computers.config())
-    
+
     if computer_name in computers:
         computer_config = computers[computer_name]
-        if isinstance(computer_config, dict) and 'mac' in computer_config:
-            mac = computer_config['mac']
-        else:
-            # Fallback for old format
-            mac = computer_config
+        mac = computer_config['mac'] if isinstance(computer_config, dict) and 'mac' in computer_config else computer_config
         send_magic_packet(str(mac))
 
     @after_this_request
-    def add_header(response):
-        """
-        Allows setting server headers after doing a POST request
-        as doing it the same way for the homepage() breaks sending the MAC addr
-        :param response:
-        :return:
-        """
-        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
-        response.headers['Permissions-Policy'] = (
-            'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()'
-        )
-        response.headers['Referrer-Policy'] = 'no-referrer-when-downgrade'
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['Content-Security-Policy'] = (
-            "default-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net 'report-sample'; script-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; style-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'"
-        )
-        return response
+    def add_security_headers(response):
+        return apply_security_headers(response)
 
     return redirect(url_for('homepage'))
 
 
 @app.route('/status', methods=['GET'])
 def get_status():
-    """
-    API endpoint to get the status of all computers
-    :return: JSON response with computer statuses
-    """
-    statuses = Computers.get_all_statuses()
+    """API endpoint for computer statuses"""
+    statuses = asyncio.run(Computers.get_all_statuses())
     return jsonify(statuses)
 
 
