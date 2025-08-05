@@ -1,45 +1,67 @@
-// Copyright year script
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('current-year').textContent = new Date().getFullYear();
     
-    // Check status on page load
     checkStatus();
     
-    // Auto-refresh status every 30 seconds
-    setInterval(checkStatus, 30000);
+    // Auto-refresh status every 15 seconds (reduced from 30)
+    setInterval(checkStatus, 15000);
     
-    // Add event listener for refresh button
     const refreshBtn = document.getElementById('refresh-status-btn');
     if (refreshBtn) {
-        refreshBtn.addEventListener('click', checkStatus);
+        refreshBtn.addEventListener('click', function() {
+            // Disable the button temporarily to prevent spam
+            refreshBtn.disabled = true;
+            refreshBtn.textContent = 'Refreshing...';
+            
+            checkStatus().finally(() => {
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = 'Refresh Status';
+            });
+        });
     }
 });
 
-// Function to check computer status
+// Cache for previous status to avoid unnecessary DOM updates
+let previousStatus = {};
+
 function checkStatus() {
-    fetch('/status')
+    return fetch('/status')
         .then(response => response.json())
         .then(data => {
-            for (const [computerName, isOnline] of Object.entries(data)) {
-                updateStatusDisplay(computerName, isOnline);
+            let hasChanges = false;
+            
+            for (const [computerName, status] of Object.entries(data)) {
+                if (previousStatus[computerName] !== status) {
+                    hasChanges = true;
+                    updateStatusDisplay(computerName, status);
+                    previousStatus[computerName] = status;
+                }
+            }
+            
+            if (hasChanges) {
+                console.log('Status updated for changed computers');
+            } else {
+                console.log('No status changes detected, skipping DOM updates');
             }
         })
         .catch(error => {
             console.error('Error checking status:', error);
-            // Show error state for all computers
-            const statusDots = document.querySelectorAll('.status-dot');
-            const statusTexts = document.querySelectorAll('.status-text');
-            statusDots.forEach(dot => {
-                dot.style.color = '#6c757d';
-            });
-            statusTexts.forEach(text => {
-                text.textContent = 'Error';
-                text.style.color = '#6c757d';
-            });
+            // Show error state for all computers only if not already in error state
+            if (!previousStatus._error) {
+                const statusDots = document.querySelectorAll('.status-dot');
+                const statusTexts = document.querySelectorAll('.status-text');
+                statusDots.forEach(dot => {
+                    dot.style.color = '#6c757d';
+                });
+                statusTexts.forEach(text => {
+                    text.textContent = 'Error';
+                    text.style.color = '#6c757d';
+                });
+                previousStatus._error = true;
+            }
         });
 }
 
-// Function to update status display for a computer
 function updateStatusDisplay(computerName, status) {
     const statusDot = document.getElementById(`dot-${computerName}`);
     const statusText = document.getElementById(`text-${computerName}`);

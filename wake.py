@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # Copyright Jay Townsend 2018-2025
 import asyncio
+import hashlib
+import json
+import time
 from typing import ClassVar
 
 import yaml
@@ -9,6 +12,14 @@ from wakeonlan import *
 from werkzeug.wrappers.response import Response
 
 app = Flask(__name__)
+
+# Global cache for configuration and status results
+_config_cache = None
+_config_cache_time = 0
+_status_cache = {}
+_status_cache_time = {}
+CONFIG_CACHE_TTL = 600
+STATUS_CACHE_TTL = 30
 
 # Security headers that are common between routes
 SECURITY_HEADERS = {
@@ -23,19 +34,32 @@ class Computers:
     """Class to handle computer-related operations"""
 
     YAML_PATHS: ClassVar = ['computers.yaml', '/var/www/html/wake/computers.yaml']
-    PING_TIMEOUT = 5
+    PING_TIMEOUT = 2
     PING_COUNT = '1'
-    PING_WAIT = '3'
+    PING_WAIT = '1'
 
     @staticmethod
     def config() -> dict:
-        """Read and parse computer configuration from the YAML file"""
+        """Read and parse computer configuration from the YAML file with caching"""
+        global _config_cache, _config_cache_time
+
+        current_time = time.time()
+
+        if _config_cache is not None and (current_time - _config_cache_time) < CONFIG_CACHE_TTL:
+            return _config_cache
         for path in Computers.YAML_PATHS:
             try:
                 with open(path) as computers:
-                    return yaml.safe_load(computers).items()
+                    config_data = yaml.safe_load(computers).items()
+                    _config_cache = config_data
+                    _config_cache_time = current_time
+                    return config_data
             except FileNotFoundError:
                 continue
+
+        # Cache empty result to avoid repeated file system calls
+        _config_cache = {}
+        _config_cache_time = current_time
         return {}
 
     @staticmethod
@@ -51,7 +75,14 @@ class Computers:
 
     @staticmethod
     async def get_all_statuses() -> dict[str, str]:
-        """Get status of all configured computers asynchronously"""
+        """Get status of all configured computers asynchronously with caching"""
+        global _status_cache, _status_cache_time
+
+        current_time = time.time()
+
+        if _status_cache and (current_time - _status_cache_time.get('last_update', 0)) < STATUS_CACHE_TTL:
+            return _status_cache
+
         computers = dict(Computers.config())
 
         tasks = []
@@ -65,6 +96,9 @@ class Computers:
         results = {}
         for name, task in tasks:
             results[name] = await task
+
+        _status_cache = results
+        _status_cache_time['last_update'] = current_time
 
         return results
 
@@ -103,9 +137,34 @@ def send_mac() -> Response:
 
 @app.route('/status', methods=['GET'])
 def get_status():
-    """API endpoint for computer statuses"""
-    statuses = asyncio.run(Computers.get_all_statuses())
-    return jsonify(statuses)
+    """API endpoint for computer statuses with ETag caching"""
+    # Use the existing event loop if available, otherwise create a new one
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # If the loop is already running, we need to use run_in_executor
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, Computers.get_all_statuses())
+                statuses = future.result()
+        else:
+            statuses = loop.run_until_complete(Computers.get_all_statuses())
+    except RuntimeError:
+        # No event loop exists, create a new one
+        statuses = asyncio.run(Computers.get_all_statuses())
+
+    status_str = json.dumps(statuses, sort_keys=True)
+    etag = hashlib.md5(status_str.encode()).hexdigest()
+
+    if request.headers.get('If-None-Match') == etag:
+        return '', 304  # Not Modified
+
+    response = make_response(jsonify(statuses))
+    response.headers['ETag'] = etag
+    response.headers['Cache-Control'] = f'max-age={STATUS_CACHE_TTL}'
+
+    return apply_security_headers(response)
 
 
 if __name__ == '__main__':
