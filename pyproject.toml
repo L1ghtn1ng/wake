@@ -27,7 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "mypy==1.19.0",
+    "mypy==1.19.1",
     "types-PyYAML==6.0.12.20250822",
     "ruff==0.14.7",
 ]
