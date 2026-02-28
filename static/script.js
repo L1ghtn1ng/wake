@@ -19,6 +19,11 @@ document.addEventListener('DOMContentLoaded', function() {
             });
         });
     }
+
+    const wakeForm = document.getElementById('wake-form');
+    if (wakeForm) {
+        wakeForm.addEventListener('submit', handleWakeSubmit);
+    }
 });
 
 // Cache for previous status to avoid unnecessary DOM updates
@@ -75,6 +80,79 @@ function updateStatusDisplay(computerName, status) {
             statusDot.style.color = '#dc3545'; // Red
             statusText.textContent = 'Offline';
             statusText.style.color = '#dc3545';
+        }
+    }
+}
+
+function getCookie(name) {
+    const encodedName = `${name}=`;
+    const cookies = document.cookie.split(';');
+
+    for (const cookie of cookies) {
+        const trimmed = cookie.trim();
+        if (trimmed.startsWith(encodedName)) {
+            return decodeURIComponent(trimmed.substring(encodedName.length));
+        }
+    }
+
+    return '';
+}
+
+async function handleWakeSubmit(event) {
+    event.preventDefault();
+
+    const form = event.currentTarget;
+    const message = document.getElementById('wake-message');
+    const submitButton = form.querySelector('button[type="submit"]');
+    const csrfToken = getCookie('flasgo-csrf');
+
+    if (!csrfToken) {
+        if (message) {
+            message.textContent = 'Missing CSRF token. Refresh the page and try again.';
+            message.style.color = '#dc3545';
+        }
+        return;
+    }
+
+    if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = 'Sending...';
+    }
+
+    if (message) {
+        message.textContent = '';
+    }
+
+    try {
+        const response = await fetch(form.action || '/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-Token': csrfToken,
+            },
+            body: new URLSearchParams(new FormData(form)),
+            credentials: 'same-origin',
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || `Request failed with status ${response.status}`);
+        }
+
+        if (message) {
+            message.textContent = 'Wake packet sent.';
+            message.style.color = '#28a745';
+        }
+        form.reset();
+    } catch (error) {
+        if (message) {
+            message.textContent = error instanceof Error ? error.message : 'Wake request failed.';
+            message.style.color = '#dc3545';
+        }
+    } finally {
+        if (submitButton) {
+            submitButton.disabled = false;
+            submitButton.textContent = 'Power On';
         }
     }
 }

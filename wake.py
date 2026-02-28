@@ -1,33 +1,52 @@
 #!/usr/bin/env python3
-# Copyright Jay Townsend 2018-2025
+# Copyright Jay Townsend 2018-2026
 import asyncio
 import hashlib
 import json
+import os
 import time
+from pathlib import Path
 from typing import ClassVar
 
 import yaml
-from flask import Flask, after_this_request, jsonify, make_response, redirect, render_template, request, url_for
-from wakeonlan import *
-from werkzeug.wrappers.response import Response
+from flasgo import Flasgo, Request, Response, Settings, redirect
+from wakeonlan import send_magic_packet
 
-app = Flask(__name__)
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / 'static'
+
+
+def parse_csv_env(name: str) -> set[str]:
+    """Parse comma-separated environment variables into a normalized set"""
+    raw_value = os.getenv(name, '')
+    return {item.strip() for item in raw_value.split(',') if item.strip()}
+
+# Security headers that are common between routes
+SECURITY_HEADERS = dict(Settings().SECURITY_HEADERS)
+SECURITY_HEADERS.update(
+    {
+        'permissions-policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()',
+        'content-security-policy': "default-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net 'report-sample'; script-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; frame-ancestors 'self'; style-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'",
+    }
+)
+
+app = Flasgo(
+    settings={
+        'ALLOWED_HOSTS': parse_csv_env('WAKE_ALLOWED_HOSTS') or {'127.0.0.1', 'localhost'},
+        'CSRF_TRUSTED_ORIGINS': parse_csv_env('WAKE_CSRF_TRUSTED_ORIGINS'),
+        'SECURITY_HEADERS': SECURITY_HEADERS,
+    },
+    static_folder=STATIC_DIR,
+)
+app.configure_templates(BASE_DIR / 'templates')
 
 # Global cache for configuration and status results
 _config_cache = None
-_config_cache_time = 0
-_status_cache = {}
-_status_cache_time = {}
+_config_cache_time: float = 0.0
+_status_cache: dict[str, str] = {}
+_status_cache_time: dict[str, float] = {}
 CONFIG_CACHE_TTL = 600
 STATUS_CACHE_TTL = 30
-
-# Security headers that are common between routes
-SECURITY_HEADERS = {
-    'Permissions-Policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()',
-    'Referrer-Policy': 'no-referrer-when-downgrade',
-    'X-Content-Type-Options': 'nosniff',
-    'Content-Security-Policy': "default-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net 'report-sample'; script-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; frame-ancestors 'self'; style-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'",
-}
 
 
 class Computers:
@@ -85,16 +104,13 @@ class Computers:
 
         computers = dict(Computers.config())
 
-        tasks = []
+        tasks: dict[str, asyncio.Task[str]] = {}
         for name, config in computers.items():
             if isinstance(config, dict) and 'ip' in config:
-                task = asyncio.create_task(Computers.check_status(config['ip']))
-                tasks.append((name, task))
-            else:
-                tasks.append((name, asyncio.create_task(asyncio.coroutine(lambda: 'DOWN')())))
+                tasks[name] = asyncio.create_task(Computers.check_status(config['ip']))
 
-        results = {}
-        for name, task in tasks:
+        results = {name: 'DOWN' for name in computers}
+        for name, task in tasks.items():
             results[name] = await task
 
         _status_cache = results
@@ -103,68 +119,48 @@ class Computers:
         return results
 
 
-def apply_security_headers(response: Response) -> Response:
-    """Apply security headers to response"""
-    for header, value in SECURITY_HEADERS.items():
-        response.headers[header] = value
-    return response
-
-
-@app.route('/', methods=['GET'])
-def homepage() -> Response:
+@app.get('/')
+async def homepage() -> Response:
     """Render main webpage"""
-    response = make_response(render_template('index.html', computers=Computers.config()))
-    return apply_security_headers(response)
+    return Response.template('index.html', templates=app.templates, context={'computers': Computers.config()})
 
 
-@app.route('/', methods=['POST'])
-def send_mac() -> Response:
+@app.post('/')
+async def send_mac(request: Request) -> Response:
     """Handle wake-on-lan request"""
-    computer_name = request.form.get('computer')
+    form_data = await request.form()
+    computer_name = form_data.get('computer')
     computers = dict(Computers.config())
 
     if computer_name in computers:
         computer_config = computers[computer_name]
         mac = computer_config['mac'] if isinstance(computer_config, dict) and 'mac' in computer_config else computer_config
-        send_magic_packet(str(mac))
+        try:
+            send_magic_packet(str(mac))
+        except OSError:
+            return Response.text('Failed to send wake packet', status_code=503)
 
-    @after_this_request
-    def add_security_headers(response):
-        return apply_security_headers(response)
-
-    return redirect(url_for('homepage'))
+    return redirect('/', status_code=303)
 
 
-@app.route('/status', methods=['GET'])
-def get_status():
+@app.get('/status')
+async def get_status(request: Request) -> Response:
     """API endpoint for computer statuses with ETag caching"""
-    # Use the existing event loop if available, otherwise create a new one
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            # If the loop is already running, we need to use run_in_executor
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(asyncio.run, Computers.get_all_statuses())
-                statuses = future.result()
-        else:
-            statuses = loop.run_until_complete(Computers.get_all_statuses())
-    except RuntimeError:
-        # No event loop exists, create a new one
-        statuses = asyncio.run(Computers.get_all_statuses())
+    statuses = await Computers.get_all_statuses()
 
     status_str = json.dumps(statuses, sort_keys=True)
     etag = hashlib.md5(status_str.encode()).hexdigest()
+    response_headers = {
+        'Cache-Control': f'max-age={STATUS_CACHE_TTL}',
+        'ETag': etag,
+    }
 
-    if request.headers.get('If-None-Match') == etag:
-        return '', 304  # Not Modified
+    if request.headers.get('if-none-match') == etag:
+        return Response(body=b'', status_code=304, headers=response_headers, allow_public_cache=True)
 
-    response = make_response(jsonify(statuses))
-    response.headers['ETag'] = etag
-    response.headers['Cache-Control'] = f'max-age={STATUS_CACHE_TTL}'
-
-    return apply_security_headers(response)
+    response = Response.json(statuses, headers=response_headers)
+    response.allow_public_cache = True
+    return response
 
 
 if __name__ == '__main__':
