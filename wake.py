@@ -21,6 +21,7 @@ def parse_csv_env(name: str) -> set[str]:
     raw_value = os.getenv(name, '')
     return {item.strip() for item in raw_value.split(',') if item.strip()}
 
+
 # Security headers that are common between routes
 SECURITY_HEADERS = dict(Settings().SECURITY_HEADERS)
 SECURITY_HEADERS.update(
@@ -89,7 +90,7 @@ class Computers:
             process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             await asyncio.wait_for(process.wait(), timeout=Computers.PING_TIMEOUT)
             return 'UP' if process.returncode == 0 else 'DOWN'
-        except (TimeoutError, Exception):
+        except TimeoutError, Exception:
             return 'DOWN'
 
     @staticmethod
