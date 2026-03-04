@@ -7,7 +7,7 @@ import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import yaml
 from flasgo import Flasgo, Request, Response, Settings, redirect
@@ -82,12 +82,13 @@ class ProxyHeadersMiddleware:
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         proxied_scope = self.proxyAwareScope(scope)
+        proxied_scope, replay_receive = await self.addCsrfHeaderFromForm(proxied_scope, receive)
         messages: list[dict[str, Any]] = []
 
         async def capture(message: dict[str, Any]) -> None:
             messages.append(message)
 
-        await self._app(proxied_scope, receive, capture)
+        await self._app(proxied_scope, replay_receive, capture)
         await self.sendWithHelpfulErrors(proxied_scope, messages, send)
 
     def proxyAwareScope(self, scope: dict[str, Any]) -> dict[str, Any]:
@@ -137,6 +138,62 @@ class ProxyHeadersMiddleware:
             updated.append((header_name, header_value))
 
         return updated
+
+    async def addCsrfHeaderFromForm(self, scope: dict[str, Any], receive: Any) -> tuple[dict[str, Any], Any]:
+        if scope.get('type') != 'http' or str(scope.get('method', 'GET')).upper() not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
+            return scope, receive
+
+        request_messages = await self.readRequestMessages(receive)
+        updated_scope = self.injectCsrfHeaderFromForm(scope, request_messages)
+        return updated_scope, self.replayReceive(request_messages)
+
+    async def readRequestMessages(self, receive: Any) -> list[dict[str, Any]]:
+        request_messages: list[dict[str, Any]] = []
+        while True:
+            message = await receive()
+            request_messages.append(message)
+            if message.get('type') == 'http.disconnect':
+                break
+            if message.get('type') == 'http.request' and not message.get('more_body', False):
+                break
+        return request_messages
+
+    def replayReceive(self, request_messages: list[dict[str, Any]]) -> Any:
+        remaining_messages = [dict(message) for message in request_messages]
+
+        async def receiveAgain() -> dict[str, Any]:
+            if remaining_messages:
+                return remaining_messages.pop(0)
+            return {'type': 'http.request', 'body': b'', 'more_body': False}
+
+        return receiveAgain
+
+    def injectCsrfHeaderFromForm(self, scope: dict[str, Any], request_messages: list[dict[str, Any]]) -> dict[str, Any]:
+        headers = decodeProxyHeaders(scope.get('headers', []))
+        csrf_header_name = self._app.security.csrf_header_name.lower()
+        if headers.get(csrf_header_name):
+            return scope
+
+        content_type = headers.get('content-type', '').split(';', 1)[0].strip().lower()
+        if content_type != 'application/x-www-form-urlencoded':
+            return scope
+
+        body = b''.join(message.get('body', b'') for message in request_messages if message.get('type') == 'http.request')
+        if not body:
+            return scope
+
+        form_data = parse_qs(body.decode('utf-8'), keep_blank_values=True)
+        token_values = form_data.get(csrf_header_name) or form_data.get('csrf_token')
+        if not token_values or not token_values[0]:
+            return scope
+
+        updated_scope = dict(scope)
+        updated_scope['headers'] = self.replaceHeader(
+            scope.get('headers', []),
+            csrf_header_name.encode('latin-1'),
+            token_values[0].encode('latin-1'),
+        )
+        return updated_scope
 
     async def sendWithHelpfulErrors(self, scope: dict[str, Any], messages: list[dict[str, Any]], send: Any) -> None:
         response_start = next((message for message in messages if message['type'] == 'http.response.start'), None)

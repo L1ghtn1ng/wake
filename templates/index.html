@@ -17,6 +17,7 @@
 <main>
   <h2>Wake</h2>
   <form method="POST" action="/" id="wake-form">
+      <input type="hidden" name="x-csrf-token" id="csrf-token-field" value="">
       <select class="form-select form-select-mb" name="computer" id="computerSelect">
           <option hidden>Choose computer</option>
           {% for key, value in computers %}

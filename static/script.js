@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('current-year').textContent = new Date().getFullYear();
+    syncCsrfField();
     
     checkStatus();
     
@@ -135,13 +136,24 @@ function getCookie(name) {
     return '';
 }
 
+function syncCsrfField() {
+    const csrfField = document.getElementById('csrf-token-field');
+    if (!csrfField) {
+        return '';
+    }
+
+    const csrfToken = getCookie('flasgo-csrf');
+    csrfField.value = csrfToken;
+    return csrfToken;
+}
+
 async function handleWakeSubmit(event) {
     event.preventDefault();
 
     const form = event.currentTarget;
     const message = document.getElementById('wake-message');
     const submitButton = form.querySelector('button[type="submit"]');
-    const csrfToken = getCookie('flasgo-csrf');
+    const csrfToken = syncCsrfField();
 
     if (!csrfToken) {
         if (message) {
