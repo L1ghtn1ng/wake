@@ -60,6 +60,9 @@ Production-facing security settings are driven by environment variables:
 - `WAKE_CSRF_TRUSTED_ORIGINS`
   Comma-separated trusted origins if you need controlled cross-origin form submissions through a reverse proxy.
   Example: `WAKE_CSRF_TRUSTED_ORIGINS=https://wake.example.com`
+- `WAKE_TRUST_PROXY_IPS`
+  Comma-separated proxy IPs whose `Forwarded` / `X-Forwarded-*` headers should be trusted.
+  Defaults to `127.0.0.1,::1`, which matches a local Caddy or Nginx instance.
 
 If `WAKE_ALLOWED_HOSTS` is not set, the app falls back to `127.0.0.1` and `localhost`.
 
@@ -74,6 +77,8 @@ uv run python wake.py
 By default the app listens on `0.0.0.0:8080`.
 
 The wake action uses Flasgo's CSRF protection. The page JavaScript reads the CSRF cookie set on `GET /` and sends it back in the `X-CSRF-Token` header on `POST /`.
+
+When the app sits behind Caddy or Nginx on the same host, it now trusts loopback `Forwarded` / `X-Forwarded-*` headers by default so the backend still sees the browser's original `https` scheme. That matters for stricter browsers, including Safari, because CSRF origin checks compare the browser origin against the backend request scheme.
 
 Routes provided by the app:
 
@@ -177,6 +182,7 @@ sudo systemctl reload caddy
 ```
 
 Caddy will automatically provision and renew TLS certificates when the hostname is publicly reachable.
+It also sends the forwarded scheme headers this app now consumes by default when Caddy connects from loopback.
 
 ### Nginx reverse proxy
 

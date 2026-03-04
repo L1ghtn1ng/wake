@@ -30,9 +30,37 @@ document.addEventListener('DOMContentLoaded', function() {
 let previousStatus = {};
 
 function checkStatus() {
-    return fetch('/status')
-        .then(response => response.json())
+    const statusMessage = document.getElementById('status-message');
+
+    return fetch('/status', {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: {
+            'Accept': 'application/json',
+        },
+    })
+        .then(response => {
+            if (response.status === 304) {
+                return null;
+            }
+            if (!response.ok) {
+                return response.text().then(errorText => {
+                    throw new Error(errorText || `Status request failed with status ${response.status}`);
+                });
+            }
+
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                throw new Error('Status request returned an unexpected response type');
+            }
+
+            return response.json();
+        })
         .then(data => {
+            if (!data) {
+                return;
+            }
+
             let hasChanges = false;
             
             for (const [computerName, status] of Object.entries(data)) {
@@ -48,9 +76,18 @@ function checkStatus() {
             } else {
                 console.log('No status changes detected, skipping DOM updates');
             }
+
+            if (statusMessage) {
+                statusMessage.textContent = '';
+            }
+            delete previousStatus._error;
         })
         .catch(error => {
             console.error('Error checking status:', error);
+            if (statusMessage) {
+                statusMessage.textContent = error instanceof Error ? error.message : 'Status check failed.';
+                statusMessage.style.color = '#dc3545';
+            }
             // Show error state for all computers only if not already in error state
             if (!previousStatus._error) {
                 const statusDots = document.querySelectorAll('.status-dot');

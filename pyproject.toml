@@ -1,6 +1,6 @@
 [project]
 name = "wake"
-version = "1.1.0"
+version = "1.2.0"
 description = "A Flasgo web app to turn on your computer using wake on lan"
 authors = [
     {name = "Jay Townsend"}

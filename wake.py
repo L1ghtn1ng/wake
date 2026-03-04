@@ -6,11 +6,15 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+from urllib.parse import parse_qsl, urlsplit
 
 import yaml
 from flasgo import Flasgo, Request, Response, Settings, redirect
 from wakeonlan import send_magic_packet
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / 'static'
@@ -22,6 +26,242 @@ def parse_csv_env(name: str) -> set[str]:
     return {item.strip() for item in raw_value.split(',') if item.strip()}
 
 
+def decodeProxyHeaders(raw_headers: Iterable[tuple[bytes, bytes]]) -> dict[str, str]:
+    return {key.decode('latin-1').lower(): value.decode('latin-1') for key, value in raw_headers}
+
+
+def firstForwardedValue(value: str | None) -> str | None:
+    if not value:
+        return None
+    first = value.split(',', 1)[0].strip()
+    return first or None
+
+
+def parseForwardedHeader(value: str | None) -> dict[str, str]:
+    first = firstForwardedValue(value)
+    if not first:
+        return {}
+
+    forwarded: dict[str, str] = {}
+    for key, raw_value in parse_qsl(first.replace(';', '&'), keep_blank_values=True):
+        normalized_key = key.strip().lower()
+        normalized_value = raw_value.strip().strip('"')
+        if normalized_key and normalized_value:
+            forwarded[normalized_key] = normalized_value
+    return forwarded
+
+
+def parseCookieHeader(cookie_header: str | None) -> dict[str, str]:
+    if not cookie_header:
+        return {}
+
+    cookies: dict[str, str] = {}
+    for chunk in cookie_header.split(';'):
+        item = chunk.strip()
+        if not item or '=' not in item:
+            continue
+        key, value = item.split('=', 1)
+        cookies[key.strip()] = value.strip()
+    return cookies
+
+
+class ProxyHeadersMiddleware:
+    """Trust loopback proxy headers so CSRF and redirects stay correct behind Caddy."""
+
+    def __init__(self, app: Flasgo, *, trusted_proxies: set[str]) -> None:
+        self._app = app
+        self._trusted_proxies = trusted_proxies
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._app, name)
+
+    def test_client(self) -> Any:
+        from flasgo.testing import TestClient
+
+        return TestClient(self)
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        proxied_scope = self.proxyAwareScope(scope)
+        messages: list[dict[str, Any]] = []
+
+        async def capture(message: dict[str, Any]) -> None:
+            messages.append(message)
+
+        await self._app(proxied_scope, receive, capture)
+        await self.sendWithHelpfulErrors(proxied_scope, messages, send)
+
+    def proxyAwareScope(self, scope: dict[str, Any]) -> dict[str, Any]:
+        if scope.get('type') != 'http':
+            return scope
+
+        client = scope.get('client')
+        client_ip = client[0] if isinstance(client, tuple) and client else None
+        if client_ip not in self._trusted_proxies:
+            return scope
+
+        headers = decodeProxyHeaders(scope.get('headers', []))
+        forwarded = parseForwardedHeader(headers.get('forwarded'))
+        forwarded_proto = firstForwardedValue(headers.get('x-forwarded-proto'))
+        forwarded_host = firstForwardedValue(headers.get('x-forwarded-host'))
+
+        scheme = (forwarded.get('proto') or forwarded_proto or '').strip().lower()
+        host = (forwarded.get('host') or forwarded_host or '').strip()
+
+        if not scheme and not host:
+            return scope
+
+        updated_scope = dict(scope)
+        if scheme in {'http', 'https'}:
+            updated_scope['scheme'] = scheme
+
+        if host:
+            updated_scope['headers'] = self.replaceHeader(scope.get('headers', []), b'host', host.encode('latin-1'))
+
+        return updated_scope
+
+    @staticmethod
+    def replaceHeader(
+        raw_headers: Iterable[tuple[bytes, bytes]], header_name: bytes, header_value: bytes
+    ) -> list[tuple[bytes, bytes]]:
+        updated: list[tuple[bytes, bytes]] = []
+        replaced = False
+        for key, value in raw_headers:
+            if key.lower() == header_name:
+                if not replaced:
+                    updated.append((header_name, header_value))
+                    replaced = True
+                continue
+            updated.append((key, value))
+
+        if not replaced:
+            updated.append((header_name, header_value))
+
+        return updated
+
+    async def sendWithHelpfulErrors(self, scope: dict[str, Any], messages: list[dict[str, Any]], send: Any) -> None:
+        response_start = next((message for message in messages if message['type'] == 'http.response.start'), None)
+        if response_start is None:
+            for message in messages:
+                await send(message)
+            return
+
+        response_bodies = [message for message in messages if message['type'] == 'http.response.body']
+        response_text = b''.join(message.get('body', b'') for message in response_bodies).decode('utf-8', 'replace')
+        replacement = self.explainErrorResponse(scope, response_start, response_text)
+
+        if replacement is None:
+            for message in messages:
+                await send(message)
+            return
+
+        updated_headers = self.replaceHeader(
+            response_start.get('headers', []),
+            b'content-length',
+            str(len(replacement)).encode('latin-1'),
+        )
+        response_start = dict(response_start)
+        response_start['headers'] = updated_headers
+
+        await send(response_start)
+        await send({'type': 'http.response.body', 'body': replacement, 'more_body': False})
+
+    def explainErrorResponse(self, scope: dict[str, Any], response_start: dict[str, Any], response_text: str) -> bytes | None:
+        status_code = response_start.get('status')
+        if status_code == 400 and response_text == 'Bad host header':
+            return self.hostErrorMessage(scope).encode('utf-8')
+        if status_code == 403 and response_text == 'CSRF validation failed':
+            return self.csrfErrorMessage(scope).encode('utf-8')
+        if status_code == 429 and response_text == 'Too Many Requests':
+            return (
+                b'Request temporarily blocked after repeated security failures. '
+                b'Fix the host or CSRF issue described above, wait about a minute, and try again.'
+            )
+        return None
+
+    def hostErrorMessage(self, scope: dict[str, Any]) -> str:
+        headers = decodeProxyHeaders(scope.get('headers', []))
+        host = headers.get('host', '<missing>')
+        allowed_hosts = ', '.join(sorted(self._app.security.allowed_hosts))
+        return (
+            f'Request blocked because Host "{host}" is not allowed. '
+            'Add this hostname to WAKE_ALLOWED_HOSTS or configure Caddy to pass the public Host header through unchanged. '
+            f'Current WAKE_ALLOWED_HOSTS: {allowed_hosts}.'
+        )
+
+    def csrfErrorMessage(self, scope: dict[str, Any]) -> str:
+        headers = decodeProxyHeaders(scope.get('headers', []))
+        cookies = parseCookieHeader(headers.get('cookie'))
+        security = self._app.security
+        origin = headers.get('origin') or headers.get('referer')
+        request_scheme = str(scope.get('scheme', 'http')).lower() or 'http'
+        request_host = headers.get('host', '').strip().lower()
+        cookie_token = cookies.get(security.csrf_cookie_name)
+        header_token = headers.get(security.csrf_header_name.lower())
+
+        if not origin:
+            return (
+                'Request blocked by CSRF protection because the browser did not send an Origin or Referer header. '
+                'Reload the page and try again. If Caddy or another proxy strips those headers, stop stripping them.'
+            )
+
+        parsed_origin = urlsplit(origin)
+        origin_display = (
+            f'{parsed_origin.scheme}://{parsed_origin.netloc}' if parsed_origin.scheme and parsed_origin.netloc else origin
+        )
+
+        if not cookie_token:
+            return (
+                f'Request blocked by CSRF protection because the {security.csrf_cookie_name} cookie is missing. '
+                'Reload the page over HTTPS and try again.'
+            )
+
+        if not header_token:
+            return (
+                f'Request blocked by CSRF protection because the {security.csrf_header_name} header is missing. '
+                'Reload the page and try again.'
+            )
+
+        if not cookie_token or not header_token or cookie_token != header_token:
+            return (
+                'Request blocked by CSRF protection because the page token does not match the CSRF cookie. '
+                'Reload the page to get a fresh token and try again.'
+            )
+
+        origin_scheme = parsed_origin.scheme.lower()
+        origin_host = parsed_origin.netloc.lower()
+        request_origin = f'{request_scheme}://{request_host}' if request_host else request_scheme
+
+        if request_host and (origin_scheme != request_scheme or origin_host != request_host):
+            forwarded_proto = headers.get('x-forwarded-proto') or headers.get('forwarded')
+            proxy_fix = (
+                'If TLS is terminated by Caddy or another reverse proxy, make sure it forwards '
+                'X-Forwarded-Proto/X-Forwarded-Host and that WAKE_TRUST_PROXY_IPS includes the proxy IP.'
+            )
+            if forwarded_proto:
+                proxy_fix = (
+                    'The proxy already forwarded browser scheme headers, so WAKE_TRUST_PROXY_IPS likely does not '
+                    'include the proxy IP that connected to the app.'
+                )
+            return (
+                f'Request blocked by CSRF protection because the page origin {origin_display} does not match '
+                f'the backend view of this request as {request_origin}. {proxy_fix}'
+            )
+
+        if security.csrf_trusted_origins:
+            trusted_origins = ', '.join(sorted(security.csrf_trusted_origins))
+            return (
+                f'Request blocked by CSRF protection because the origin {origin_display} is not allowed. '
+                'Add it to WAKE_CSRF_TRUSTED_ORIGINS if cross-origin posting is intentional. '
+                f'Current WAKE_CSRF_TRUSTED_ORIGINS: {trusted_origins}.'
+            )
+
+        return (
+            f'Request blocked by CSRF protection for origin {origin_display}. '
+            'Reload the page and try again. If you are using Caddy or another reverse proxy, confirm that '
+            'the forwarded scheme headers reach the app and that WAKE_TRUST_PROXY_IPS is set correctly.'
+        )
+
+
 # Security headers that are common between routes
 SECURITY_HEADERS = dict(Settings().SECURITY_HEADERS)
 SECURITY_HEADERS.update(
@@ -31,7 +271,7 @@ SECURITY_HEADERS.update(
     }
 )
 
-app = Flasgo(
+base_app = Flasgo(
     settings={
         'ALLOWED_HOSTS': parse_csv_env('WAKE_ALLOWED_HOSTS') or {'127.0.0.1', 'localhost'},
         'CSRF_TRUSTED_ORIGINS': parse_csv_env('WAKE_CSRF_TRUSTED_ORIGINS'),
@@ -39,7 +279,11 @@ app = Flasgo(
     },
     static_folder=STATIC_DIR,
 )
-app.configure_templates(BASE_DIR / 'templates')
+base_app.configure_templates(BASE_DIR / 'templates')
+app = ProxyHeadersMiddleware(
+    base_app,
+    trusted_proxies=parse_csv_env('WAKE_TRUST_PROXY_IPS') or {'127.0.0.1', '::1'},
+)
 
 # Global cache for configuration and status results
 _config_cache = None

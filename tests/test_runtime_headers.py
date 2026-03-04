@@ -92,3 +92,57 @@ def test_send_mac_uses_form_parsing_and_redirects(monkeypatch) -> None:
     assert response.status_code == 303
     assert response.location == '/'
     assert sent_packets == ['30:5a:3a:56:57:58']
+
+
+def test_send_mac_accepts_https_origin_behind_trusted_proxy(monkeypatch) -> None:
+    client = app.test_client()
+    sent_packets: list[str] = []
+    client.get('/', headers={'x-forwarded-proto': 'https'})
+
+    def fake_send_magic_packet(mac: str) -> None:
+        sent_packets.append(mac)
+
+    monkeypatch.setattr('wake.send_magic_packet', fake_send_magic_packet)
+
+    response = client.post(
+        '/',
+        data={'computer': 'demo1'},
+        headers={
+            'origin': 'https://localhost',
+            'x-forwarded-proto': 'https',
+            'x-csrf-token': client.cookies['flasgo-csrf'],
+        },
+    )
+
+    assert response.status_code == 303
+    assert response.location == '/'
+    assert sent_packets == ['30:5a:3a:56:57:58']
+
+
+def test_bad_host_header_returns_actionable_message() -> None:
+    client = app.test_client()
+
+    response = client.get('/', headers={'host': 'wake.example.com'})
+
+    assert response.status_code == 400
+    assert 'WAKE_ALLOWED_HOSTS' in response.text
+    assert 'wake.example.com' in response.text
+
+
+def test_csrf_failure_returns_proxy_guidance() -> None:
+    client = app.test_client()
+    client.get('/')
+
+    response = client.post(
+        '/',
+        data={'computer': 'demo1'},
+        headers={
+            'origin': 'https://localhost',
+            'x-csrf-token': client.cookies['flasgo-csrf'],
+        },
+    )
+
+    assert response.status_code == 403
+    assert 'https://localhost' in response.text
+    assert 'http://localhost' in response.text
+    assert 'WAKE_TRUST_PROXY_IPS' in response.text
