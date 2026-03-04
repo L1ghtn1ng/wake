@@ -18,7 +18,7 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "flasgo==0.3.1",
+    "flasgo==0.4.0",
     "wakeonlan==3.1.0",
     "PyYaml==6.0.3",
 ]

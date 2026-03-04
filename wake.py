@@ -167,11 +167,11 @@ class ProxyHeadersMiddleware:
 
     def explainErrorResponse(self, scope: dict[str, Any], response_start: dict[str, Any], response_text: str) -> bytes | None:
         status_code = response_start.get('status')
-        if status_code == 400 and response_text == 'Bad host header':
+        if status_code == 400 and 'host' in response_text.lower():
             return self.hostErrorMessage(scope).encode('utf-8')
-        if status_code == 403 and response_text == 'CSRF validation failed':
+        if status_code == 403 and 'csrf' in response_text.lower():
             return self.csrfErrorMessage(scope).encode('utf-8')
-        if status_code == 429 and response_text == 'Too Many Requests':
+        if status_code == 429 and 'too many requests' in response_text.lower():
             return (
                 b'Request temporarily blocked after repeated security failures. '
                 b'Fix the host or CSRF issue described above, wait about a minute, and try again.'

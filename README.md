@@ -9,9 +9,9 @@ Wake is a Flasgo-based web app for sending Wake-on-LAN packets and checking whet
 
 Runtime dependencies are defined in [pyproject.toml](/home/jay/code/wake/pyproject.toml):
 
-- `flasgo==0.3.0`
+- `flasgo==0.4.0`
 - `wakeonlan==3.1.0`
-- `PyYAML==6.0.2`
+- `PyYAML==6.0.3`
 
 ## Installation
 
