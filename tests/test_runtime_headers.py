@@ -145,6 +145,29 @@ def test_send_mac_accepts_csrf_token_from_form_field(monkeypatch) -> None:
     assert sent_packets == ['30:5a:3a:56:57:58']
 
 
+def test_send_mac_accepts_missing_origin_when_csrf_tokens_match(monkeypatch) -> None:
+    client = app.test_client()
+    sent_packets: list[str] = []
+    client.get('/')
+
+    def fake_send_magic_packet(mac: str) -> None:
+        sent_packets.append(mac)
+
+    monkeypatch.setattr('wake.send_magic_packet', fake_send_magic_packet)
+
+    response = client.post(
+        '/',
+        data={'computer': 'demo1'},
+        headers={
+            'x-csrf-token': client.cookies['flasgo-csrf'],
+        },
+    )
+
+    assert response.status_code == 303
+    assert response.location == '/'
+    assert sent_packets == ['30:5a:3a:56:57:58']
+
+
 def test_bad_host_header_returns_actionable_message() -> None:
     client = app.test_client()
 

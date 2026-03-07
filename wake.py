@@ -83,6 +83,7 @@ class ProxyHeadersMiddleware:
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         proxied_scope = self.proxyAwareScope(scope)
         proxied_scope, replay_receive = await self.addCsrfHeaderFromForm(proxied_scope, receive)
+        proxied_scope = self.addSameOriginFallbackHeaders(proxied_scope)
         messages: list[dict[str, Any]] = []
 
         async def capture(message: dict[str, Any]) -> None:
@@ -193,6 +194,29 @@ class ProxyHeadersMiddleware:
             csrf_header_name.encode('latin-1'),
             token_values[0].encode('latin-1'),
         )
+        return updated_scope
+
+    def addSameOriginFallbackHeaders(self, scope: dict[str, Any]) -> dict[str, Any]:
+        if scope.get('type') != 'http' or str(scope.get('method', 'GET')).upper() not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
+            return scope
+
+        headers = decodeProxyHeaders(scope.get('headers', []))
+        if headers.get('origin') or headers.get('referer'):
+            return scope
+
+        security = self._app.security
+        cookies = parseCookieHeader(headers.get('cookie'))
+        cookie_token = cookies.get(security.csrf_cookie_name)
+        header_token = headers.get(security.csrf_header_name.lower())
+        request_host = headers.get('host', '').strip()
+        request_scheme = str(scope.get('scheme', 'http')).lower() or 'http'
+
+        if not request_host or not cookie_token or cookie_token != header_token:
+            return scope
+
+        origin = f'{request_scheme}://{request_host}'
+        updated_scope = dict(scope)
+        updated_scope['headers'] = self.replaceHeader(scope.get('headers', []), b'origin', origin.encode('latin-1'))
         return updated_scope
 
     async def sendWithHelpfulErrors(self, scope: dict[str, Any], messages: list[dict[str, Any]], send: Any) -> None:
