@@ -147,6 +147,12 @@ function syncCsrfField() {
     return csrfToken;
 }
 
+function buildWakeRequestBody(form, csrfToken) {
+    const formData = new FormData(form);
+    formData.set('x-csrf-token', csrfToken);
+    return new URLSearchParams(formData);
+}
+
 async function handleWakeSubmit(event) {
     event.preventDefault();
 
@@ -173,13 +179,13 @@ async function handleWakeSubmit(event) {
     }
 
     try {
+        const requestBody = buildWakeRequestBody(form, csrfToken);
         const response = await fetch(form.action || '/', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
-                'X-CSRF-Token': csrfToken,
             },
-            body: new URLSearchParams(new FormData(form)),
+            body: requestBody,
             credentials: 'same-origin',
         });
 
