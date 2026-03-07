@@ -145,6 +145,29 @@ def test_send_mac_accepts_csrf_token_from_form_field(monkeypatch) -> None:
     assert sent_packets == ['30:5a:3a:56:57:58']
 
 
+def test_send_mac_accepts_same_origin_cookie_only_csrf(monkeypatch) -> None:
+    client = app.test_client()
+    sent_packets: list[str] = []
+    client.get('/')
+
+    def fake_send_magic_packet(mac: str) -> None:
+        sent_packets.append(mac)
+
+    monkeypatch.setattr('wake.send_magic_packet', fake_send_magic_packet)
+
+    response = client.post(
+        '/',
+        data={'computer': 'demo1'},
+        headers={
+            'origin': 'http://localhost',
+        },
+    )
+
+    assert response.status_code == 303
+    assert response.location == '/'
+    assert sent_packets == ['30:5a:3a:56:57:58']
+
+
 def test_send_mac_accepts_missing_origin_when_csrf_tokens_match(monkeypatch) -> None:
     client = app.test_client()
     sent_packets: list[str] = []
@@ -166,6 +189,28 @@ def test_send_mac_accepts_missing_origin_when_csrf_tokens_match(monkeypatch) -> 
     assert response.status_code == 303
     assert response.location == '/'
     assert sent_packets == ['30:5a:3a:56:57:58']
+
+
+def test_send_mac_rejects_cross_origin_cookie_only_csrf(monkeypatch) -> None:
+    client = app.test_client()
+    sent_packets: list[str] = []
+    client.get('/')
+
+    def fake_send_magic_packet(mac: str) -> None:
+        sent_packets.append(mac)
+
+    monkeypatch.setattr('wake.send_magic_packet', fake_send_magic_packet)
+
+    response = client.post(
+        '/',
+        data={'computer': 'demo1'},
+        headers={
+            'origin': 'https://evil.example',
+        },
+    )
+
+    assert response.status_code == 403
+    assert sent_packets == []
 
 
 def test_send_mac_accepts_missing_origin_with_form_csrf_token(monkeypatch) -> None:

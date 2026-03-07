@@ -175,26 +175,52 @@ class ProxyHeadersMiddleware:
         if headers.get(csrf_header_name):
             return scope
 
+        cookie_token = self.sameOriginCookieToken(scope, headers)
+
         content_type = headers.get('content-type', '').split(';', 1)[0].strip().lower()
-        if content_type != 'application/x-www-form-urlencoded':
-            return scope
+        token_value = cookie_token
+        if content_type == 'application/x-www-form-urlencoded':
+            body = b''.join(message.get('body', b'') for message in request_messages if message.get('type') == 'http.request')
+            if body:
+                form_data = parse_qs(body.decode('utf-8'), keep_blank_values=True)
+                token_values = form_data.get(csrf_header_name) or form_data.get('csrf_token')
+                if token_values and token_values[0]:
+                    token_value = token_values[0]
 
-        body = b''.join(message.get('body', b'') for message in request_messages if message.get('type') == 'http.request')
-        if not body:
-            return scope
-
-        form_data = parse_qs(body.decode('utf-8'), keep_blank_values=True)
-        token_values = form_data.get(csrf_header_name) or form_data.get('csrf_token')
-        if not token_values or not token_values[0]:
+        if not token_value:
             return scope
 
         updated_scope = dict(scope)
         updated_scope['headers'] = self.replaceHeader(
             scope.get('headers', []),
             csrf_header_name.encode('latin-1'),
-            token_values[0].encode('latin-1'),
+            token_value.encode('latin-1'),
         )
         return updated_scope
+
+    def sameOriginCookieToken(self, scope: dict[str, Any], headers: dict[str, str]) -> str | None:
+        security = self._app.security
+        cookie_token = parseCookieHeader(headers.get('cookie')).get(security.csrf_cookie_name)
+        if not cookie_token:
+            return None
+
+        request_host = headers.get('host', '').strip().lower()
+        request_scheme = str(scope.get('scheme', 'http')).lower() or 'http'
+        if not request_host:
+            return None
+
+        origin = headers.get('origin') or headers.get('referer')
+        if origin:
+            parsed_origin = urlsplit(origin)
+            if parsed_origin.scheme.lower() != request_scheme or parsed_origin.netloc.lower() != request_host:
+                return None
+            return cookie_token
+
+        sec_fetch_site = headers.get('sec-fetch-site', '').strip().lower()
+        if sec_fetch_site in {'same-origin', 'same-site', 'none'}:
+            return cookie_token
+
+        return None
 
     def addSameOriginFallbackHeaders(self, scope: dict[str, Any]) -> dict[str, Any]:
         if scope.get('type') != 'http' or str(scope.get('method', 'GET')).upper() not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
