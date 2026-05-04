@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import yaml
-from flasgo import Flasgo, Request, Response, Settings, redirect
+from flasgo import Flasgo, Request, Response, Settings, redirect, HTTPException
 from wakeonlan import send_magic_packet
 
 if TYPE_CHECKING:
@@ -380,6 +380,7 @@ SECURITY_HEADERS.update(
 
 base_app = Flasgo(
     settings={
+        'DEBUG': False,
         'ALLOWED_HOSTS': parse_csv_env('WAKE_ALLOWED_HOSTS') or {'127.0.0.1', 'localhost'},
         'CSRF_TRUSTED_ORIGINS': parse_csv_env('WAKE_CSRF_TRUSTED_ORIGINS'),
         'SECURITY_HEADERS': SECURITY_HEADERS,

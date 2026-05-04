@@ -84,7 +84,7 @@ target/
 *.iws
 
 ## Plugin-specific files:
-
+.junie/
 # IntelliJ
 /out/
 
