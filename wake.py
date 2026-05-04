@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import parse_qs, parse_qsl, urlsplit
 
 import yaml
-from flasgo import Flasgo, Request, Response, Settings, redirect, HTTPException
+from flasgo import Flasgo, Request, Response, Settings, redirect
 from wakeonlan import send_magic_packet
 
 if TYPE_CHECKING:
