@@ -37,16 +37,16 @@ wheels = [
 
 [[package]]
 name = "flasgo"
-version = "0.5.0"
+version = "0.5.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/86/dc/2e0bda897f7778875c9590c323826faa64a0b3b328f10ff62f463eac03e8/flasgo-0.5.0.tar.gz", hash = "sha256:4d74375815fe49d27c4c2573c0a279fed58748ffce8e4db4deece8bcf0c32fda", size = 77403, upload-time = "2026-05-04T03:28:47.149Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/26/ff/77ccaf63b394f8d74f416d29f1ebfad6531cab61ccb61edf0cc25ea69c97/flasgo-0.5.1.tar.gz", hash = "sha256:09bac167cf9dc28d99c913875ca616cbc78fc4f4c6f661ecba9b4e7bca022f87", size = 82814, upload-time = "2026-05-06T05:52:00.968Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1a/10/f90e7e6d93cb16c20acd1e290b6b49f7f5103e2058cdc665246a99655524/flasgo-0.5.0-py3-none-any.whl", hash = "sha256:84bcbc32b8944311d4d7a6406c6122c9ad842e0be2a4519fd8853ff3f427a189", size = 46799, upload-time = "2026-05-04T03:28:48.318Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/d8/f14d8b4de466f4d69b1932f21879b5d43989c9776a6598a36a5130e172b1/flasgo-0.5.1-py3-none-any.whl", hash = "sha256:2b86ce02f7d029075d320bfc2a188e153390e069eb76a304c26bb42947f1e3d8", size = 51623, upload-time = "2026-05-06T05:52:02.27Z" },
 ]
 
 [[package]]
@@ -391,7 +391,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flasgo", specifier = "==0.5.0" },
+    { name = "flasgo", specifier = "==0.5.1" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.19.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = "==9.0.3" },
     { name = "pyyaml", specifier = "==6.0.3" },
