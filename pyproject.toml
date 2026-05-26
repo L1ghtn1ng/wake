@@ -28,7 +28,7 @@ dev = [
     "mypy==1.19.1",
     "pytest==9.0.3",
     "types-PyYAML==6.0.12.20250915",
-    "ruff==0.15.8",
+    "ruff==0.15.14",
 ]
 [tool.mypy]
 python_version = "3.14"
