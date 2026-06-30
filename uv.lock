@@ -450,17 +450,17 @@ requires-dist = [
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.15" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = "==6.0.12.20250915" },
-    { name = "wakeonlan", specifier = "==3.3.0" },
+    { name = "wakeonlan", specifier = "==4.0.0" },
 ]
 provides-extras = ["dev"]
 
 [[package]]
 name = "wakeonlan"
-version = "3.3.0"
+version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0b/69/073906a5a1eedf2e6a36d284456e9fba43e9063f910d202778dab6f96799/wakeonlan-3.3.0.tar.gz", hash = "sha256:80ec2163ecb3a091c6fa655e5e3106968ceaa4541ed90afa6391d1011fef71f2", size = 4514, upload-time = "2026-05-25T10:57:57.483Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8f/16/69e4cdcce1be240667dfa2607f12e00d1c79e4606656327c4f1fb88fea40/wakeonlan-4.0.0.tar.gz", hash = "sha256:1cb30c4ae60f85ef289f4f7d4f703382ed19ba84103206dc5e2b1e51bec9f456", size = 5079, upload-time = "2026-06-28T09:23:15.711Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/ab/d1a60da2f2c46a022ef15caaabe5bc468519c05dc855a0a40a83cb656c26/wakeonlan-3.3.0-py3-none-any.whl", hash = "sha256:969d4e1f30add1a79790c99350e91c46ed45588770416257a3f806ca0314b17a", size = 5334, upload-time = "2026-05-25T10:57:55.848Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/80/ecebf7b1b32ebe4a10d72a09e21c4c76a2460fac159752ec9ab88508b7d0/wakeonlan-4.0.0-py3-none-any.whl", hash = "sha256:82c50fe0c8dbc4848b8398f48fd2d2ed5d4af363f3006279372d76513ef84505", size = 5882, upload-time = "2026-06-28T09:23:14.577Z" },
 ]
 
 [[package]]
