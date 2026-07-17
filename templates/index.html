@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>Wake</title>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <meta name="theme-color" content="#16213e">
     <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/static/favicon-16x16.png">
@@ -15,36 +16,73 @@
 </head>
 <body>
 <main>
-  <h2>Wake</h2>
-  <form method="POST" action="/" id="wake-form">
-      <input type="hidden" name="x-csrf-token" id="csrf-token-field" value="">
-      <select class="form-select form-select-mb" name="computer" id="computerSelect">
-          <option hidden>Choose computer</option>
-          {% for key, value in computers %}
-              <option value="{{ key }}">{{ key }}</option>
-          {% endfor %}
-      </select>
-      <button type="submit" class="btn btn-rounded">Power On</button>
-  </form>
-  <p id="wake-message" class="text-center mt-3" role="status" aria-live="polite"></p>
-  <noscript>
-      <p class="text-center mt-3">JavaScript is required to submit the wake request when CSRF protection is enabled.</p>
-  </noscript>
-  
-  <div class="status-section">
-      <h5>Computer Status</h5>
-      <div id="status-list">
-          {% for key, value in computers %}
-              <div class="status-item">
-                  <span class="status-dot" id="dot-{{ key }}">●</span>
-                  <span class="computer-name">{{ key }}</span>
-                  <span class="status-text" id="text-{{ key }}">Checking...</span>
+  <header class="page-header">
+      <h1>Wake</h1>
+      <p>Wake a device and confirm when it comes online.</p>
+  </header>
+
+  {% if config_error %}
+      <section class="notice notice-error" role="alert">
+          <h2>Configuration error</h2>
+          <p>{{ config_error }}</p>
+      </section>
+  {% elif computers %}
+      <section class="status-section" aria-labelledby="devices-heading">
+          <div class="section-heading">
+              <div>
+                  <h2 id="devices-heading">Devices</h2>
+                  <p>Live status is refreshed automatically.</p>
               </div>
-          {% endfor %}
-      </div>
-      <button type="button" class="btn btn-secondary btn-sm" id="refresh-status-btn">Refresh Status</button>
-      <p id="status-message" class="text-center mt-3" role="status" aria-live="polite"></p>
-  </div>
+              <button type="button" class="btn btn-secondary btn-sm" id="refresh-status-btn">Refresh</button>
+          </div>
+
+          <div id="device-grid" class="device-grid">
+              {% for key, computer in computers %}
+                  <article class="device-card" data-computer-name="{{ key }}">
+                      <div class="device-heading">
+                          <span class="status-dot status-checking" aria-hidden="true">●</span>
+                          <div>
+                              <h3 class="computer-name">{{ key }}</h3>
+                              {% if computer.ip %}
+                                  <p class="device-address">{{ computer.ip }}</p>
+                              {% endif %}
+                          </div>
+                          <span class="status-text status-checking" role="status">Checking</span>
+                      </div>
+
+                      <p class="status-meta">Waiting for the first status check.</p>
+
+                      <form method="POST" action="/" class="wake-form">
+                          <input type="hidden" name="x-csrf-token" class="csrf-token-field" value="">
+                          <input type="hidden" name="computer" value="{{ key }}">
+                          <button type="submit" class="btn wake-button" aria-label="Wake {{ key }}">
+                              <i class="fa-solid fa-power-off" aria-hidden="true"></i>
+                              <span>Wake</span>
+                          </button>
+                      </form>
+                      {% if key in terminal_devices %}
+                          <a class="btn btn-secondary terminal-link" href="/terminal?device={{ key|urlencode }}">
+                              <i class="fa-solid fa-terminal" aria-hidden="true"></i>
+                              <span>SSH terminal</span>
+                          </a>
+                      {% endif %}
+                      <p class="wake-message" role="status" aria-live="polite"></p>
+                  </article>
+              {% endfor %}
+          </div>
+
+          <p id="status-message" class="status-message" role="status" aria-live="polite"></p>
+      </section>
+  {% else %}
+      <section class="notice" role="status">
+          <h2>No devices configured</h2>
+          <p>Add a device to <code>computers.yaml</code>, then refresh this page.</p>
+      </section>
+  {% endif %}
+
+  <noscript>
+      <p class="notice">Wake buttons still work, but live status verification requires JavaScript.</p>
+  </noscript>
 </main>
 
 <footer class="text-center text-white">

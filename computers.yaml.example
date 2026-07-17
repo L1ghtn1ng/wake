@@ -1,0 +1,11 @@
+demo1:
+  mac: 30:5a:3a:56:57:58
+  ip: 10.0.0.2
+  ssh:
+    authentication: password
+    username: ubuntu
+    known_hosts: /home/ubuntu/.ssh/known_hosts
+    allowed_users: [ubuntu]
+demo2:
+  mac: e0:d4:e8:98:42:11
+  ip: 10.0.0.254

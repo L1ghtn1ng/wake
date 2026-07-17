@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ computer_name }} terminal · Wake</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <link rel="stylesheet" href="/static/terminal-page.css">
+    <script src="/static/terminal.js" defer></script>
+</head>
+<body data-computer-name="{{ computer_name }}" data-authentication="{{ authentication }}" data-local-development="{{ 'true' if local_development else 'false' }}">
+    <header class="terminal-header">
+        <div>
+            <a href="/" class="back-link">← Devices</a>
+            <h1>{{ computer_name }}</h1>
+        </div>
+        <div class="terminal-actions">
+            <span id="terminal-status" class="terminal-status" role="status" aria-live="polite">
+                {% if authentication == 'password' %}Password required{% else %}Connecting…{% endif %}
+            </span>
+            <button id="reconnect-button" type="button" hidden>Reconnect</button>
+            <button id="disconnect-button" type="button">Disconnect</button>
+        </div>
+    </header>
+    <main>
+        {% if authentication == 'password' %}
+            <form id="ssh-password-form" class="password-panel">
+                <label for="ssh-password">SSH password for {{ computer_name }}</label>
+                <div class="password-controls">
+                    <input id="ssh-password" type="password" autocomplete="current-password" maxlength="1024" required>
+                    <button type="submit">Connect</button>
+                </div>
+                <p>The password is sent once over the protected WebSocket and is not stored by Wake.</p>
+            </form>
+        {% endif %}
+        <div id="terminal" role="application" aria-label="SSH terminal for {{ computer_name }}"></div>
+    </main>
+    <noscript>This SSH terminal requires JavaScript.</noscript>
+</body>
+</html>

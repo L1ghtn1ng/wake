@@ -1,11 +1,12 @@
-from html.parser import HTMLParser
+import asyncio
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from wake import app
+from wake import MAX_MUTATING_REQUEST_BODY_BYTES, app
 
 ALLOWED_CDN_HOSTS = {'cdnjs.cloudflare.com', 'cdn.jsdelivr.net'}
 LOCAL_PREFIXES = ('/static/', '/', '#')
@@ -263,3 +264,121 @@ def test_csrf_failure_returns_proxy_guidance() -> None:
     assert 'https://localhost' in response.text
     assert 'http://localhost' in response.text
     assert 'WAKE_TRUST_PROXY_IPS' in response.text
+
+
+def test_form_csrf_injection_ignores_invalid_utf8_body() -> None:
+    """Malformed form bodies must not crash the CSRF middleware."""
+
+    async def exercise(body: bytes) -> list[dict]:
+        scope = {
+            'type': 'http',
+            'asgi': {'version': '3.0'},
+            'http_version': '1.1',
+            'method': 'POST',
+            'scheme': 'http',
+            'path': '/',
+            'raw_path': b'/',
+            'query_string': b'',
+            'headers': [
+                (b'host', b'localhost'),
+                (b'content-type', b'application/x-www-form-urlencoded'),
+                (b'cookie', b'flasgo-csrf=testtoken'),
+                (b'origin', b'http://localhost'),
+                (b'sec-fetch-site', b'same-origin'),
+            ],
+            'client': ('127.0.0.1', 12345),
+            'server': ('127.0.0.1', 8080),
+        }
+        messages = [{'type': 'http.request', 'body': body, 'more_body': False}]
+        sent: list[dict] = []
+
+        async def receive() -> dict:
+            return messages.pop(0) if messages else {'type': 'http.disconnect'}
+
+        async def send(message: dict) -> None:
+            sent.append(message)
+
+        await app(scope, receive, send)
+        return sent
+
+    invalid_utf8 = asyncio.run(exercise(b'computer=demo1&x-csrf-token=\xff\xff'))
+    non_latin1_token = asyncio.run(exercise('computer=demo1&x-csrf-token=tok€n'.encode()))
+
+    for sent in (invalid_utf8, non_latin1_token):
+        status = next(message['status'] for message in sent if message.get('type') == 'http.response.start')
+        # Fail closed as CSRF/auth errors, never as an unhandled 500.
+        assert status in {400, 403, 422}
+
+
+def test_oversized_mutating_body_is_rejected() -> None:
+    async def exercise() -> list[dict]:
+        oversized = b'x' * (MAX_MUTATING_REQUEST_BODY_BYTES + 1)
+        scope = {
+            'type': 'http',
+            'asgi': {'version': '3.0'},
+            'http_version': '1.1',
+            'method': 'POST',
+            'scheme': 'http',
+            'path': '/',
+            'raw_path': b'/',
+            'query_string': b'',
+            'headers': [
+                (b'host', b'localhost'),
+                (b'content-type', b'application/x-www-form-urlencoded'),
+                (b'cookie', b'flasgo-csrf=testtoken'),
+                (b'origin', b'http://localhost'),
+            ],
+            'client': ('127.0.0.1', 12345),
+            'server': ('127.0.0.1', 8080),
+        }
+        messages = [{'type': 'http.request', 'body': oversized, 'more_body': False}]
+        sent: list[dict] = []
+
+        async def receive() -> dict:
+            return messages.pop(0) if messages else {'type': 'http.disconnect'}
+
+        async def send(message: dict) -> None:
+            sent.append(message)
+
+        await app(scope, receive, send)
+        return sent
+
+    sent = asyncio.run(exercise())
+    status = next(message['status'] for message in sent if message.get('type') == 'http.response.start')
+    body = b''.join(message.get('body', b'') for message in sent if message.get('type') == 'http.response.body')
+    assert status == 413
+    assert b'too large' in body.lower()
+
+
+def test_trusted_proxy_ignores_unsafe_forwarded_host() -> None:
+    scope = {
+        'type': 'http',
+        'client': ('127.0.0.1', 50000),
+        'headers': [
+            (b'host', b'localhost'),
+            (b'x-forwarded-proto', b'https'),
+            (b'x-forwarded-host', b'evil.example\r\nX-Injected: yes'),
+        ],
+    }
+
+    updated = app.proxyAwareScope(scope)
+    host_values = [value for key, value in updated['headers'] if key.lower() == b'host']
+    assert host_values == [b'localhost']
+    assert updated.get('scheme') == 'https'
+
+
+def test_same_origin_fallback_rejects_unsafe_host() -> None:
+    scope = {
+        'type': 'http',
+        'method': 'POST',
+        'scheme': 'https',
+        'headers': [
+            (b'host', b'localhost\r\nX-Evil: 1'),
+            (b'cookie', b'flasgo-csrf=abc'),
+            (b'x-csrf-token', b'abc'),
+        ],
+    }
+
+    updated = app.addSameOriginFallbackHeaders(scope)
+    assert updated is scope
+    assert not any(key.lower() == b'origin' for key, _ in updated.get('headers', []))
