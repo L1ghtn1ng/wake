@@ -500,6 +500,18 @@ def test_manifest_is_installable_and_all_icons_are_served() -> None:
         assert client.get(icon['src']).status_code == 200
 
 
+def test_homepage_declares_and_serves_the_favicon() -> None:
+    client = app.test_client()
+
+    homepage = client.get('/')
+    favicon = client.get('/favicon.ico')
+
+    assert '<link rel="icon" href="/favicon.ico" sizes="any">' in homepage.text
+    assert favicon.status_code == 200
+    assert favicon.headers['content-type'] == 'image/x-icon'
+    assert favicon.body
+
+
 def test_homepage_renders_direct_device_wake_controls() -> None:
     response = app.test_client().get('/')
 

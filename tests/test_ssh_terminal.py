@@ -609,6 +609,9 @@ def test_terminal_page_requires_proxy_identity_and_uses_the_shared_csp(monkeypat
     assert unauthenticated.status_code == 401
     assert authenticated.status_code == 200
     assert '<title>desktop terminal · Wake</title>' in authenticated.text
+    assert '<link rel="icon" href="/favicon.ico" sizes="any">' in authenticated.text
+    assert '/static/favicon-32x32.png' in authenticated.text
+    assert '/static/favicon-16x16.png' in authenticated.text
     assert '/static/terminal.js' in authenticated.text
     assert 'xterm' not in authenticated.text.lower()
     assert authenticated.headers['content-security-policy'] == homepage.headers['content-security-policy']

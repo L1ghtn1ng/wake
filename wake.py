@@ -1057,6 +1057,16 @@ async def homepage(request: Request) -> Response:
     )
 
 
+@app.get('/favicon.ico')
+async def favicon(request: Request) -> Response:
+    """Serve the conventional favicon URL used as a browser fallback."""
+    return Response(
+        body=(STATIC_DIR / 'favicon.ico').read_bytes(),
+        content_type='image/x-icon',
+        allow_public_cache=True,
+    )
+
+
 @app.get('/terminal')
 async def terminal_page(request: Request) -> Response:
     """Render the isolated terminal page only for an allowlisted proxy identity."""
