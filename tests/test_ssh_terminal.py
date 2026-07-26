@@ -536,6 +536,18 @@ def test_terminal_browser_client_is_dependency_free_and_uses_safe_dom_apis() -> 
     assert 'sessionStorage' not in source
 
 
+def test_terminal_browser_client_keeps_control_key_local_for_remote_shortcuts() -> None:
+    source = (Path(__file__).resolve().parents[1] / 'static' / 'terminal.js').read_text(encoding='utf-8')
+
+    assert "event.key === 'Control'" in source
+    assert "event.code === 'ControlLeft'" in source
+    assert "event.code === 'ControlRight'" in source
+    assert 'suppressBrowserInput = true' in source
+    assert "input.addEventListener('keyup'" in source
+    assert "input.addEventListener('beforeinput'" in source
+    assert 'return String.fromCharCode(upper.charCodeAt(0) - 64)' in source
+
+
 def test_header_and_cookie_helpers_have_one_shared_implementation() -> None:
     assert wake.decode_headers is http_utils.decode_headers
     assert wake.parse_cookie_header is http_utils.parse_cookie_header

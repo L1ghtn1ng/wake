@@ -608,6 +608,10 @@
     return null;
   }
 
+  function isControlKey(event) {
+    return event.key === 'Control' || event.code === 'ControlLeft' || event.code === 'ControlRight';
+  }
+
   function showPasswordPrompt(message = 'Password required') {
     if (authentication !== 'password' || !passwordForm || !passwordInput) return;
     passwordForm.hidden = false;
@@ -673,12 +677,31 @@
     });
   }
 
+  // Modifier keys have no standalone PTY byte. Keep Ctrl local while still
+  // translating Ctrl+letter keydowns into their ASCII control characters.
+  let suppressBrowserInput = false;
   input.addEventListener('keydown', (event) => {
+    if (isControlKey(event)) {
+      suppressBrowserInput = true;
+      input.value = '';
+      event.preventDefault();
+      return;
+    }
     const sequence = keySequence(event);
+    suppressBrowserInput = sequence !== null;
     if (sequence !== null) {
       event.preventDefault();
       sendInput(sequence);
     }
+  });
+  input.addEventListener('keyup', (event) => {
+    if (!isControlKey(event)) return;
+    suppressBrowserInput = false;
+    input.value = '';
+    event.preventDefault();
+  });
+  input.addEventListener('beforeinput', (event) => {
+    if (suppressBrowserInput) event.preventDefault();
   });
   let composing = false;
   input.addEventListener('compositionstart', () => {
@@ -691,6 +714,10 @@
   });
   input.addEventListener('input', () => {
     if (composing) return;
+    if (suppressBrowserInput) {
+      input.value = '';
+      return;
+    }
     if (input.value) sendInput(capLocalInput(input.value));
     input.value = '';
   });
