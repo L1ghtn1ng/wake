@@ -3,30 +3,53 @@
 import asyncio
 import hashlib
 import json
+import logging
 import math
 import os
 import re
+import sys
 import time
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from ipaddress import ip_address
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
-from urllib.parse import parse_qs, parse_qsl, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import yaml
 from flasgo import Flasgo, Request, Response, Settings, redirect
 from wakeonlan import create_magic_packet
 from wakeonlan import wake as send_magic_packet
 
-from ssh_terminal import TERMINAL_PAGE_CSP, SSHSettings, TerminalGateway
+from http_utils import (
+    CLIENT_IP_SCOPE_KEY,
+    decode_headers,
+    etag_matches,
+    first_forwarded_value,
+    forwarded_client_ip,
+    header_safe_token_bytes,
+    is_safe_host_header,
+    parse_cookie_header,
+    parse_forwarded_header,
+    replace_header,
+    tokens_match,
+)
+from ssh_terminal import SSHSettings, TerminalGateway
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+type ASGIApplication = Callable[..., Awaitable[None]]
+
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / 'static'
+
+# Blocked requests keep their diagnostics here instead of disclosing configuration to the client.
+_security_logger = logging.getLogger('wake.security')
+# Configuration failures are logged in full and summarized generically for clients.
+_config_logger = logging.getLogger('wake.config')
 
 
 def parse_csv_env(name: str) -> set[str]:
@@ -48,73 +71,24 @@ def parse_bool_env(name: str, *, default: bool = False) -> bool:
     raise ValueError(f'{name} must be one of: 1, 0, true, false, yes, no, on, off')
 
 
-def decodeProxyHeaders(raw_headers: Iterable[tuple[bytes, bytes]]) -> dict[str, str]:
-    return {key.decode('latin-1').lower(): value.decode('latin-1') for key, value in raw_headers}
-
-
-def firstForwardedValue(value: str | None) -> str | None:
-    if not value:
-        return None
-    first = value.split(',', 1)[0].strip()
-    return first or None
-
-
-def parseForwardedHeader(value: str | None) -> dict[str, str]:
-    first = firstForwardedValue(value)
-    if not first:
-        return {}
-
-    forwarded: dict[str, str] = {}
-    for key, raw_value in parse_qsl(first.replace(';', '&'), keep_blank_values=True):
-        normalized_key = key.strip().lower()
-        normalized_value = raw_value.strip().strip('"')
-        if normalized_key and normalized_value:
-            forwarded[normalized_key] = normalized_value
-    return forwarded
-
-
-def parseCookieHeader(cookie_header: str | None) -> dict[str, str]:
-    if not cookie_header:
-        return {}
-
-    cookies: dict[str, str] = {}
-    for chunk in cookie_header.split(';'):
-        item = chunk.strip()
-        if not item or '=' not in item:
-            continue
-        key, value = item.split('=', 1)
-        cookies[key.strip()] = value.strip()
-    return cookies
-
-
-def is_safe_host_header(value: str) -> bool:
-    """Reject Host values that could inject headers or break authority parsing."""
-    if not value or len(value) > 255:
-        return False
-    # Printable ASCII only: no whitespace, CTL, or non-ASCII (IDN must be punycode).
-    return all(0x21 <= ord(character) <= 0x7E for character in value)
-
-
-def header_safe_token_bytes(value: str) -> bytes | None:
-    """Encode a CSRF token for an HTTP header, or None if it is not header-safe."""
-    try:
-        encoded = value.encode('latin-1')
-    except UnicodeEncodeError:
-        return None
-    if not encoded or any(byte < 0x20 or byte == 0x7F for byte in encoded):
-        return None
-    return encoded
-
-
 # Wake only needs small form posts (device name + CSRF). Cap buffered bodies to limit memory use.
 MAX_MUTATING_REQUEST_BODY_BYTES = 256 * 1024
+# Only these statuses are rewritten with actionable text, so every other response streams untouched.
+EXPLAINABLE_STATUS_CODES = frozenset({400, 403, 429})
+# Guard against buffering an unexpectedly large error body while looking for a known message.
+MAX_BUFFERED_ERROR_BODY_BYTES = 64 * 1024
+# Exact bodies Flasgo returns for blocked requests, matched instead of sniffing for substrings.
+FLASGO_HOST_ERROR_BODY = 'Invalid Host header.'
+FLASGO_CSRF_ERROR_BODY = 'CSRF validation failed.'
+FLASGO_SECURITY_RATE_LIMIT_BODY = 'Too many failed security checks'
 
 
 class ProxyHeadersMiddleware:
     """Trust loopback proxy headers so CSRF and redirects stay correct behind Caddy."""
 
-    def __init__(self, app: Flasgo, *, trusted_proxies: set[str], terminal_gateway: TerminalGateway) -> None:
-        self._app = app
+    def __init__(self, app: ASGIApplication, *, trusted_proxies: set[str], terminal_gateway: TerminalGateway) -> None:
+        # Flasgo exposes security settings in addition to the standard ASGI call interface.
+        self._app: Any = app
         self._trusted_proxies = trusted_proxies
         self._terminal_gateway = terminal_gateway
 
@@ -127,25 +101,19 @@ class ProxyHeadersMiddleware:
         return TestClient(self)
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        proxied_scope = self.proxyAwareScope(scope)
+        proxied_scope = self.proxy_aware_scope(scope)
         if proxied_scope.get('type') == 'websocket':
             await self._terminal_gateway(proxied_scope, receive, send)
             return
-        prepared = await self.addCsrfHeaderFromForm(proxied_scope, receive)
+        prepared = await self.add_csrf_header_from_form(proxied_scope, receive)
         if prepared is None:
-            await self.sendPlainTextError(send, 413, 'Request body too large')
+            await self.send_plain_text_error(send, 413, 'Request body too large')
             return
         proxied_scope, replay_receive = prepared
-        proxied_scope = self.addSameOriginFallbackHeaders(proxied_scope)
-        messages: list[dict[str, Any]] = []
+        proxied_scope = self.add_same_origin_fallback_headers(proxied_scope)
+        await self._app(proxied_scope, replay_receive, self.explaining_send(proxied_scope, send))
 
-        async def capture(message: dict[str, Any]) -> None:
-            messages.append(message)
-
-        await self._app(proxied_scope, replay_receive, capture)
-        await self.sendWithHelpfulErrors(proxied_scope, messages, send)
-
-    def proxyAwareScope(self, scope: dict[str, Any]) -> dict[str, Any]:
+    def proxy_aware_scope(self, scope: dict[str, Any]) -> dict[str, Any]:
         if scope.get('type') not in {'http', 'websocket'}:
             return scope
 
@@ -154,20 +122,25 @@ class ProxyHeadersMiddleware:
         if client_ip not in self._trusted_proxies:
             return scope
 
-        headers = decodeProxyHeaders(scope.get('headers', []))
-        forwarded = parseForwardedHeader(headers.get('forwarded'))
-        forwarded_proto = firstForwardedValue(headers.get('x-forwarded-proto'))
-        forwarded_host = firstForwardedValue(headers.get('x-forwarded-host'))
+        headers = decode_headers(scope.get('headers', []))
+        forwarded = parse_forwarded_header(headers.get('forwarded'))
+        forwarded_proto = first_forwarded_value(headers.get('x-forwarded-proto'))
+        forwarded_host = first_forwarded_value(headers.get('x-forwarded-host'))
 
         scheme = (forwarded.get('proto') or forwarded_proto or '').strip().lower()
         host = (forwarded.get('host') or forwarded_host or '').strip()
         if host and not is_safe_host_header(host):
             host = ''
 
-        if not scheme and not host:
+        # scope['client'] stays the proxy so downstream trust checks keep working; audit logs use this instead.
+        origin_ip = forwarded_client_ip(headers)
+
+        if not scheme and not host and origin_ip is None:
             return scope
 
         updated_scope = dict(scope)
+        if origin_ip is not None:
+            updated_scope[CLIENT_IP_SCOPE_KEY] = origin_ip
         if scheme in {'http', 'https'}:
             if scope.get('type') == 'websocket':
                 updated_scope['scheme'] = 'wss' if scheme == 'https' else 'ws'
@@ -175,36 +148,15 @@ class ProxyHeadersMiddleware:
                 updated_scope['scheme'] = scheme
 
         if host:
-            updated_scope['headers'] = self.replaceHeader(scope.get('headers', []), b'host', host.encode('ascii'))
+            updated_scope['headers'] = replace_header(scope.get('headers', []), b'host', host.encode('ascii'))
 
         return updated_scope
 
-    @staticmethod
-    def replaceHeader(
-        raw_headers: Iterable[tuple[bytes, bytes]], header_name: bytes, header_value: bytes
-    ) -> list[tuple[bytes, bytes]]:
-        updated: list[tuple[bytes, bytes]] = []
-        replaced = False
-        for key, value in raw_headers:
-            if key.lower() == header_name:
-                if not replaced:
-                    updated.append((header_name, header_value))
-                    replaced = True
-                continue
-            updated.append((key, value))
-
-        if not replaced:
-            updated.append((header_name, header_value))
-
-        return updated
-
-    async def addCsrfHeaderFromForm(
-        self, scope: dict[str, Any], receive: Any
-    ) -> tuple[dict[str, Any], Any] | None:
+    async def add_csrf_header_from_form(self, scope: dict[str, Any], receive: Any) -> tuple[dict[str, Any], Any] | None:
         if scope.get('type') != 'http' or str(scope.get('method', 'GET')).upper() not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
             return scope, receive
 
-        headers = decodeProxyHeaders(scope.get('headers', []))
+        headers = decode_headers(scope.get('headers', []))
         csrf_header_name = self._app.security.csrf_header_name.lower()
         # CSRF header already present: do not buffer the body (avoids unnecessary memory use).
         if headers.get(csrf_header_name):
@@ -213,19 +165,15 @@ class ProxyHeadersMiddleware:
         content_type = headers.get('content-type', '').split(';', 1)[0].strip().lower()
         needs_body = content_type == 'application/x-www-form-urlencoded'
         if not needs_body:
-            return self.injectCsrfHeaderFromForm(scope, []), receive
+            return self.inject_csrf_header_from_form(scope, []), receive
 
-        request_messages, oversized = await self.readRequestMessages(
-            receive, max_body_bytes=MAX_MUTATING_REQUEST_BODY_BYTES
-        )
+        request_messages, oversized = await self.read_request_messages(receive, max_body_bytes=MAX_MUTATING_REQUEST_BODY_BYTES)
         if oversized:
             return None
-        updated_scope = self.injectCsrfHeaderFromForm(scope, request_messages)
-        return updated_scope, self.replayReceive(request_messages)
+        updated_scope = self.inject_csrf_header_from_form(scope, request_messages)
+        return updated_scope, self.replay_receive(request_messages)
 
-    async def readRequestMessages(
-        self, receive: Any, *, max_body_bytes: int
-    ) -> tuple[list[dict[str, Any]], bool]:
+    async def read_request_messages(self, receive: Any, *, max_body_bytes: int) -> tuple[list[dict[str, Any]], bool]:
         request_messages: list[dict[str, Any]] = []
         total_body_bytes = 0
         oversized = False
@@ -261,23 +209,23 @@ class ProxyHeadersMiddleware:
                 break
         return request_messages, oversized
 
-    def replayReceive(self, request_messages: list[dict[str, Any]]) -> Any:
+    def replay_receive(self, request_messages: list[dict[str, Any]]) -> Any:
         remaining_messages = [dict(message) for message in request_messages]
 
-        async def receiveAgain() -> dict[str, Any]:
+        async def receive_again() -> dict[str, Any]:
             if remaining_messages:
                 return remaining_messages.pop(0)
             return {'type': 'http.request', 'body': b'', 'more_body': False}
 
-        return receiveAgain
+        return receive_again
 
-    def injectCsrfHeaderFromForm(self, scope: dict[str, Any], request_messages: list[dict[str, Any]]) -> dict[str, Any]:
-        headers = decodeProxyHeaders(scope.get('headers', []))
+    def inject_csrf_header_from_form(self, scope: dict[str, Any], request_messages: list[dict[str, Any]]) -> dict[str, Any]:
+        headers = decode_headers(scope.get('headers', []))
         csrf_header_name = self._app.security.csrf_header_name.lower()
         if headers.get(csrf_header_name):
             return scope
 
-        cookie_token = self.sameOriginCookieToken(scope, headers)
+        cookie_token = self.same_origin_cookie_token(scope, headers)
 
         content_type = headers.get('content-type', '').split(';', 1)[0].strip().lower()
         token_value = cookie_token
@@ -302,16 +250,16 @@ class ProxyHeadersMiddleware:
             return scope
 
         updated_scope = dict(scope)
-        updated_scope['headers'] = self.replaceHeader(
+        updated_scope['headers'] = replace_header(
             scope.get('headers', []),
             csrf_header_name.encode('latin-1'),
             token_bytes,
         )
         return updated_scope
 
-    def sameOriginCookieToken(self, scope: dict[str, Any], headers: dict[str, str]) -> str | None:
+    def same_origin_cookie_token(self, scope: dict[str, Any], headers: dict[str, str]) -> str | None:
         security = self._app.security
-        cookie_token = parseCookieHeader(headers.get('cookie')).get(security.csrf_cookie_name)
+        cookie_token = parse_cookie_header(headers.get('cookie')).get(security.csrf_cookie_name)
         if not cookie_token:
             return None
 
@@ -333,16 +281,16 @@ class ProxyHeadersMiddleware:
 
         return None
 
-    def addSameOriginFallbackHeaders(self, scope: dict[str, Any]) -> dict[str, Any]:
+    def add_same_origin_fallback_headers(self, scope: dict[str, Any]) -> dict[str, Any]:
         if scope.get('type') != 'http' or str(scope.get('method', 'GET')).upper() not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
             return scope
 
-        headers = decodeProxyHeaders(scope.get('headers', []))
+        headers = decode_headers(scope.get('headers', []))
         if headers.get('origin') or headers.get('referer'):
             return scope
 
         security = self._app.security
-        cookies = parseCookieHeader(headers.get('cookie'))
+        cookies = parse_cookie_header(headers.get('cookie'))
         cookie_token = cookies.get(security.csrf_cookie_name)
         header_token = headers.get(security.csrf_header_name.lower())
         request_host = headers.get('host', '').strip()
@@ -352,18 +300,17 @@ class ProxyHeadersMiddleware:
             not request_host
             or not is_safe_host_header(request_host)
             or request_scheme not in {'http', 'https'}
-            or not cookie_token
-            or cookie_token != header_token
+            or not tokens_match(cookie_token, header_token)
         ):
             return scope
 
         origin = f'{request_scheme}://{request_host}'
         updated_scope = dict(scope)
-        updated_scope['headers'] = self.replaceHeader(scope.get('headers', []), b'origin', origin.encode('ascii'))
+        updated_scope['headers'] = replace_header(scope.get('headers', []), b'origin', origin.encode('ascii'))
         return updated_scope
 
     @staticmethod
-    async def sendPlainTextError(send: Any, status_code: int, message: str) -> None:
+    async def send_plain_text_error(send: Any, status_code: int, message: str) -> None:
         body = message.encode('utf-8')
         await send(
             {
@@ -378,23 +325,60 @@ class ProxyHeadersMiddleware:
         )
         await send({'type': 'http.response.body', 'body': body, 'more_body': False})
 
-    async def sendWithHelpfulErrors(self, scope: dict[str, Any], messages: list[dict[str, Any]], send: Any) -> None:
-        response_start = next((message for message in messages if message['type'] == 'http.response.start'), None)
-        if response_start is None:
-            for message in messages:
-                await send(message)
-            return
+    def explaining_send(self, scope: dict[str, Any], send: Any) -> Any:
+        """Stream every response untouched, buffering only a blocked one long enough to explain it."""
+        blocked_start: dict[str, Any] | None = None
+        blocked_body: list[dict[str, Any]] = []
+        buffered_bytes = 0
 
-        response_bodies = [message for message in messages if message['type'] == 'http.response.body']
-        response_text = b''.join(message.get('body', b'') for message in response_bodies).decode('utf-8', 'replace')
-        replacement = self.explainErrorResponse(scope, response_start, response_text)
+        async def flush_buffered() -> None:
+            nonlocal blocked_start
+            if blocked_start is None:
+                return
+            await send(blocked_start)
+            blocked_start = None
+            for buffered in blocked_body:
+                await send(buffered)
+            blocked_body.clear()
+
+        async def explaining(message: dict[str, Any]) -> None:
+            nonlocal blocked_start, buffered_bytes
+            if message.get('type') == 'http.response.start':
+                if message.get('status') in EXPLAINABLE_STATUS_CODES:
+                    blocked_start = message
+                    return
+                await send(message)
+                return
+            if blocked_start is None:
+                await send(message)
+                return
+
+            blocked_body.append(message)
+            buffered_bytes += len(message.get('body', b'') or b'')
+            if buffered_bytes > MAX_BUFFERED_ERROR_BODY_BYTES:
+                await flush_buffered()
+                return
+            if message.get('more_body'):
+                return
+            await self.send_explained_error(scope, blocked_start, blocked_body, send)
+            blocked_start = None
+            blocked_body.clear()
+
+        return explaining
+
+    async def send_explained_error(
+        self, scope: dict[str, Any], response_start: dict[str, Any], response_body: list[dict[str, Any]], send: Any
+    ) -> None:
+        response_text = b''.join(message.get('body', b'') or b'' for message in response_body).decode('utf-8', 'replace')
+        replacement = self.explain_error_response(scope, response_start, response_text)
 
         if replacement is None:
-            for message in messages:
+            await send(response_start)
+            for message in response_body:
                 await send(message)
             return
 
-        updated_headers = self.replaceHeader(
+        updated_headers = replace_header(
             response_start.get('headers', []),
             b'content-length',
             str(len(replacement)).encode('latin-1'),
@@ -405,32 +389,35 @@ class ProxyHeadersMiddleware:
         await send(response_start)
         await send({'type': 'http.response.body', 'body': replacement, 'more_body': False})
 
-    def explainErrorResponse(self, scope: dict[str, Any], response_start: dict[str, Any], response_text: str) -> bytes | None:
+    def explain_error_response(self, scope: dict[str, Any], response_start: dict[str, Any], response_text: str) -> bytes | None:
         status_code = response_start.get('status')
-        if status_code == 400 and 'host' in response_text.lower():
-            return self.hostErrorMessage(scope).encode('utf-8')
-        if status_code == 403 and 'csrf' in response_text.lower():
-            return self.csrfErrorMessage(scope).encode('utf-8')
-        if status_code == 429 and 'too many requests' in response_text.lower():
+        if status_code == 400 and response_text.startswith(FLASGO_HOST_ERROR_BODY):
+            return self.host_error_message(scope).encode('utf-8')
+        if status_code == 403 and response_text.startswith(FLASGO_CSRF_ERROR_BODY):
+            return self.csrf_error_message(scope).encode('utf-8')
+        if status_code == 429 and response_text.startswith(FLASGO_SECURITY_RATE_LIMIT_BODY):
             return (
                 b'Request temporarily blocked after repeated security failures. '
                 b'Fix the host or CSRF issue described above, wait about a minute, and try again.'
             )
         return None
 
-    def hostErrorMessage(self, scope: dict[str, Any]) -> str:
-        headers = decodeProxyHeaders(scope.get('headers', []))
+    def host_error_message(self, scope: dict[str, Any]) -> str:
+        headers = decode_headers(scope.get('headers', []))
         host = headers.get('host', '<missing>')
-        allowed_hosts = ', '.join(sorted(self._app.security.allowed_hosts))
+        _security_logger.warning(
+            'host_rejected host=%r allowed_hosts=%s',
+            host,
+            ', '.join(sorted(self._app.security.allowed_hosts)) or '<empty>',
+        )
         return (
             f'Request blocked because Host "{host}" is not allowed. '
-            'Add this hostname to WAKE_ALLOWED_HOSTS or configure Caddy to pass the public Host header through unchanged. '
-            f'Current WAKE_ALLOWED_HOSTS: {allowed_hosts}.'
+            'Add this hostname to WAKE_ALLOWED_HOSTS or configure Caddy to pass the public Host header through unchanged.'
         )
 
-    def csrfErrorMessage(self, scope: dict[str, Any]) -> str:
-        headers = decodeProxyHeaders(scope.get('headers', []))
-        cookies = parseCookieHeader(headers.get('cookie'))
+    def csrf_error_message(self, scope: dict[str, Any]) -> str:
+        headers = decode_headers(scope.get('headers', []))
+        cookies = parse_cookie_header(headers.get('cookie'))
         security = self._app.security
         origin = headers.get('origin') or headers.get('referer')
         request_scheme = str(scope.get('scheme', 'http')).lower() or 'http'
@@ -461,7 +448,7 @@ class ProxyHeadersMiddleware:
                 'Reload the page and try again.'
             )
 
-        if not cookie_token or not header_token or cookie_token != header_token:
+        if not tokens_match(cookie_token, header_token):
             return (
                 'Request blocked by CSRF protection because the page token does not match the CSRF cookie. '
                 'Reload the page to get a fresh token and try again.'
@@ -488,11 +475,14 @@ class ProxyHeadersMiddleware:
             )
 
         if security.csrf_trusted_origins:
-            trusted_origins = ', '.join(sorted(security.csrf_trusted_origins))
+            _security_logger.warning(
+                'csrf_origin_rejected origin=%r trusted_origins=%s',
+                origin_display,
+                ', '.join(sorted(security.csrf_trusted_origins)) or '<empty>',
+            )
             return (
                 f'Request blocked by CSRF protection because the origin {origin_display} is not allowed. '
-                'Add it to WAKE_CSRF_TRUSTED_ORIGINS if cross-origin posting is intentional. '
-                f'Current WAKE_CSRF_TRUSTED_ORIGINS: {trusted_origins}.'
+                'Add it to WAKE_CSRF_TRUSTED_ORIGINS if cross-origin posting is intentional.'
             )
 
         return (
@@ -502,12 +492,13 @@ class ProxyHeadersMiddleware:
         )
 
 
-# Security headers that are common between routes
-SECURITY_HEADERS = dict(Settings().SECURITY_HEADERS)
+# Security headers shared by every route. Settings() is instantiated only to read the framework defaults.
+SECURITY_HEADERS = Settings().SECURITY_HEADERS
+# default-src keeps the CDN hosts because Font Awesome loads its web fonts through the font-src fallback.
 SECURITY_HEADERS.update(
     {
         'permissions-policy': 'accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=(), interest-cohort=()',
-        'content-security-policy': "default-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net 'report-sample'; script-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; script-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'report-sample'; connect-src 'self' 'report-sample'; img-src 'self' data: w3.org/svg/2000 'report-sample'; base-uri 'self'; frame-ancestors 'self'; style-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'; style-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline' 'report-sample'",
+        'content-security-policy': "default-src 'self' cdnjs.cloudflare.com cdn.jsdelivr.net; script-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com; script-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com; connect-src 'self'; img-src 'self' data:; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; object-src 'none'; style-src 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline'; style-src-elem 'self' cdn.jsdelivr.net cdnjs.cloudflare.com 'unsafe-inline'",
     }
 )
 TERMINAL_LOCAL_DEVELOPMENT = parse_bool_env('WAKE_TERMINAL_LOCAL_DEVELOPMENT')
@@ -553,6 +544,8 @@ app = ProxyHeadersMiddleware(
 
 # Global caches for parsed configuration and status results.
 STATUS_CACHE_TTL = 30
+# Floor between forced probes of one device, so the public refresh parameter cannot amplify network probes.
+STATUS_REFRESH_MIN_INTERVAL = float(os.getenv('WAKE_STATUS_REFRESH_MIN_INTERVAL', '5'))
 WAKE_VERIFICATION_TIMEOUT = 30
 DEFAULT_WAKE_DESTINATION = '255.255.255.255'
 DEFAULT_WAKE_PORT = 9
@@ -560,6 +553,12 @@ DEFAULT_WAKE_PORT = 9
 
 class ConfigurationError(ValueError):
     """Raised when computers.yaml cannot be used safely."""
+
+
+def configuration_error_summary(error: ConfigurationError) -> str:
+    """Log the configuration failure in full and return a message safe for any client."""
+    _config_logger.error('configuration_error detail=%s', error)
+    return 'Configuration error: the device configuration could not be loaded. Check the Wake server logs for details.'
 
 
 @dataclass(frozen=True, slots=True)
@@ -606,6 +605,7 @@ _config_cache_path: Path | None = None
 _config_cache_mtime_ns: int | None = None
 _status_cache: dict[str, StatusResult] = {}
 _status_cache_time: dict[str, float] = {}
+_status_refresh_time: dict[str, float] = {}
 _last_online: dict[str, str] = {}
 
 
@@ -911,6 +911,34 @@ class Computers:
     def invalidate_status(name: str) -> None:
         _status_cache.pop(name, None)
         _status_cache_time.pop(name, None)
+        _status_refresh_time.pop(name, None)
+
+    @staticmethod
+    def throttled_refresh(requested: set[str], names: Iterable[str]) -> set[str]:
+        """Drop forced refreshes for devices probed within the minimum interval."""
+        if not requested:
+            return set()
+
+        configured_names = set(names)
+        wanted = configured_names if '*' in requested else requested & configured_names
+        now = time.monotonic()
+        allowed = {
+            name
+            for name in wanted
+            if name not in _status_refresh_time or now - _status_refresh_time[name] >= STATUS_REFRESH_MIN_INTERVAL
+        }
+        for name in allowed:
+            _status_refresh_time[name] = now
+        return allowed
+
+    @staticmethod
+    def ping_command(host: str, timeout: float) -> list[str]:
+        """Build a ping command whose -W unit matches the platform: milliseconds on BSD, seconds on Linux."""
+        if sys.platform == 'darwin' or sys.platform.startswith(('freebsd', 'openbsd', 'netbsd', 'dragonfly')):
+            wait = str(max(1, math.ceil(timeout * 1000)))
+        else:
+            wait = str(max(1, math.ceil(timeout)))
+        return ['ping', '-c', Computers.PING_COUNT, '-W', wait, host]
 
     @staticmethod
     async def check_status(computer: ComputerSettings) -> StatusResult:
@@ -925,8 +953,7 @@ class Computers:
         error_message: str | None = None
 
         if probe.type == 'icmp':
-            ping_wait_seconds = str(max(1, math.ceil(probe.timeout)))
-            command = ['ping', '-c', Computers.PING_COUNT, '-W', ping_wait_seconds, probe.host]
+            command = Computers.ping_command(probe.host, probe.timeout)
             process: asyncio.subprocess.Process | None = None
             try:
                 process = await asyncio.create_subprocess_exec(
@@ -955,7 +982,8 @@ class Computers:
                     timeout=probe.timeout,
                 )
                 state = 'UP'
-            except TimeoutError, ConnectionError, OSError:
+            except OSError:
+                # TimeoutError and ConnectionError are OSError subclasses, so this covers every refusal.
                 state = 'DOWN'
             finally:
                 if writer is not None:
@@ -973,7 +1001,7 @@ class Computers:
         """Probe stale or explicitly refreshed devices concurrently."""
         force = force or set()
         force_all = '*' in force
-        current_time = time.time()
+        current_time = time.monotonic()
         computers = Computers.config()
         configured_names = set(computers)
 
@@ -990,13 +1018,19 @@ class Computers:
             else:
                 tasks[name] = asyncio.create_task(Computers.check_status(computer))
 
-        for name, computer in computers.items():
-            if name not in tasks:
-                continue
-            result = await tasks[name]
-            _status_cache[name] = result
-            _status_cache_time[name] = current_time
-            results[name] = result
+        if tasks:
+            # Gather so a failing or cancelled probe cannot leave its siblings unawaited.
+            probed = await asyncio.gather(*tasks.values(), return_exceptions=True)
+            failure: BaseException | None = None
+            for name, result in zip(tasks, probed, strict=True):
+                if isinstance(result, BaseException):
+                    failure = failure or result
+                    continue
+                _status_cache[name] = result
+                _status_cache_time[name] = current_time
+                results[name] = result
+            if failure is not None:
+                raise failure
 
         return {name: results[name] for name in computers}
 
@@ -1009,7 +1043,7 @@ async def homepage(request: Request) -> Response:
         config_error = None
     except ConfigurationError as error:
         computers = {}
-        config_error = str(error)
+        config_error = configuration_error_summary(error)
     actor = terminal_gateway.actor(request.scope)
     terminal_devices = {name for name, computer in computers.items() if terminal_gateway.can_access(actor, computer.ssh)}
     return Response.template(
@@ -1031,11 +1065,14 @@ async def terminal_page(request: Request) -> Response:
     actor = terminal_gateway.actor(request.scope)
     if actor is None:
         return Response.text('Terminal authentication required', status_code=401)
-    device_name = request.query_params.get('device', [''])[-1]
+    # A duplicated device parameter is a smuggling smell, not a legitimate request.
+    device_values = request.query_params.get('device', [])
+    if len(device_values) != 1:
+        return Response.text('Terminal target not found', status_code=404)
     try:
-        computer = Computers.config().get(device_name)
+        computer = Computers.config().get(device_values[0])
     except ConfigurationError as error:
-        return Response.text(str(error), status_code=503)
+        return Response.text(configuration_error_summary(error), status_code=503)
     ssh = computer.ssh if computer is not None else None
     if computer is None or ssh is None or not terminal_gateway.can_access(actor, ssh):
         return Response.text('Terminal target not found', status_code=404)
@@ -1047,7 +1084,6 @@ async def terminal_page(request: Request) -> Response:
             'authentication': ssh.authentication,
             'local_development': terminal_gateway.local_development,
         },
-        headers={'Content-Security-Policy': TERMINAL_PAGE_CSP},
     )
 
 
@@ -1060,9 +1096,10 @@ async def send_mac(request: Request) -> Response:
     try:
         computers = Computers.config()
     except ConfigurationError as error:
+        summary = configuration_error_summary(error)
         if wants_json:
-            return Response.json({'error': str(error)}, status_code=503)
-        return Response.text(str(error), status_code=503)
+            return Response.json({'error': summary}, status_code=503)
+        return Response.text(summary, status_code=503)
 
     if not isinstance(computer_name, str) or computer_name not in computers:
         if wants_json:
@@ -1097,9 +1134,9 @@ async def get_status(request: Request) -> Response:
     force = set(request.query_params.get('refresh', []))
     detailed = request.query_params.get('details', ['0'])[-1] == '1'
     try:
-        statuses = await Computers.get_all_statuses(force=force)
+        statuses = await Computers.get_all_statuses(force=Computers.throttled_refresh(force, Computers.config()))
     except ConfigurationError as error:
-        return Response.json({'error': str(error)}, status_code=503)
+        return Response.json({'error': configuration_error_summary(error)}, status_code=503)
 
     status_data: dict[str, Any]
     if detailed:
@@ -1108,13 +1145,13 @@ async def get_status(request: Request) -> Response:
         status_data = {name: status.state for name, status in statuses.items()}
 
     status_str = json.dumps(status_data, sort_keys=True)
-    etag = hashlib.md5(status_str.encode(), usedforsecurity=False).hexdigest()
+    etag = f'"{hashlib.md5(status_str.encode(), usedforsecurity=False).hexdigest()}"'
     response_headers = {
         'Cache-Control': 'no-store' if force else f'max-age={STATUS_CACHE_TTL}',
         'ETag': etag,
     }
 
-    if request.headers.get('if-none-match') == etag:
+    if etag_matches(request.headers.get('if-none-match'), etag):
         return Response(body=b'', status_code=304, headers=response_headers, allow_public_cache=not force)
 
     response = Response.json(status_data, headers=response_headers)
@@ -1123,4 +1160,5 @@ async def get_status(request: Request) -> Response:
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080)
+    # Loopback by default: the documented deployment always puts a reverse proxy in front of the app.
+    app.run(host=os.getenv('WAKE_BIND_HOST', '127.0.0.1'), port=int(os.getenv('WAKE_BIND_PORT', '8080')))

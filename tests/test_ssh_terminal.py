@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import http_utils
 import ssh_terminal
 import wake
 from ssh_terminal import SSHSettings, TerminalGateway, TerminalProtocolError
@@ -169,15 +171,54 @@ def test_actor_requires_trusted_proxy_and_both_user_allowlists() -> None:
     assert terminal_gateway.actor(scope) is None
 
 
+def test_actor_rejects_a_smuggled_duplicate_identity_header() -> None:
+    settings = SSHSettings('host', 22, 'user', Path('/key'), Path('/known'), allowed_users=('jay',))
+    terminal_gateway = gateway(settings=settings)
+    scope = websocket_scope()
+
+    assert terminal_gateway.actor(scope) == 'jay'
+
+    # A second copy means the proxy did not overwrite a client-supplied header, so the identity is ambiguous.
+    scope['headers'].append((b'X-Wake-User', b'jay'))
+    assert terminal_gateway.actor(scope) is None
+
+
+def test_audit_logs_name_the_forwarded_client_not_the_proxy(caplog) -> None:
+    scope = websocket_scope(origin='https://evil.example')
+    scope[http_utils.CLIENT_IP_SCOPE_KEY] = '192.0.2.10'
+
+    with caplog.at_level(logging.WARNING, logger='wake.terminal.audit'):
+        asyncio.run(run_gateway(gateway(), scope, []))
+
+    logged = '\n'.join(record.getMessage() for record in caplog.records)
+    assert 'source=192.0.2.10' in logged
+    assert 'source=127.0.0.1' not in logged
+
+
+def test_proxy_headers_expose_the_forwarded_client_ip_to_the_gateway() -> None:
+    scope = websocket_scope()
+    scope['headers'].append((b'x-forwarded-for', b'192.0.2.10, 10.0.0.1'))
+
+    updated = wake.app.proxy_aware_scope(scope)
+
+    assert updated[http_utils.CLIENT_IP_SCOPE_KEY] == '192.0.2.10'
+    assert updated['client'] == ('127.0.0.1', 50000)
+    assert ssh_terminal._client_ip(updated) == '192.0.2.10'
+    assert ssh_terminal._client_ip(websocket_scope()) == '127.0.0.1'
+
+
 def test_local_development_auto_authenticates_only_direct_loopback() -> None:
     terminal_gateway = gateway(local_development=True)
     scope = websocket_scope(origin='http://localhost', actor=None)
     scope['scheme'] = 'ws'
 
     assert terminal_gateway.actor(scope) == 'jay'
-    assert terminal_gateway._handshake_rejection(
-        scope, ssh_terminal._headers(scope), terminal_gateway.actor(scope), 'desktop'
-    ) is None
+    assert (
+        terminal_gateway._handshake_rejection(
+            scope, http_utils.decode_headers(scope['headers']), terminal_gateway.actor(scope), 'desktop'
+        )
+        is None
+    )
 
     scope['client'] = ('192.0.2.10', 50000)
     assert terminal_gateway.actor(scope) is None
@@ -198,7 +239,7 @@ def test_proxy_headers_preserve_secure_websocket_origin() -> None:
     scope['scheme'] = 'ws'
     scope['headers'].extend([(b'x-forwarded-proto', b'https'), (b'x-forwarded-host', b'localhost')])
 
-    updated = wake.app.proxyAwareScope(scope)
+    updated = wake.app.proxy_aware_scope(scope)
 
     assert updated['scheme'] == 'wss'
     assert dict(updated['headers'])[b'host'] == b'localhost'
@@ -216,7 +257,7 @@ def test_application_proxy_handling_preserves_trusted_peer_for_terminal_identity
         ]
     )
 
-    updated = wake.app.proxyAwareScope(scope)
+    updated = wake.app.proxy_aware_scope(scope)
 
     assert updated['client'] == ('127.0.0.1', 50000)
     assert updated['scheme'] == 'wss'
@@ -385,7 +426,7 @@ def test_ssh_connection_pins_host_key_and_disables_auth_fallbacks(monkeypatch, t
     assert isinstance(connection_options['host_key_policy'], ssh_terminal.StrictHostKeyPolicy)
     strategy = connection_options['auth_strategy']
     assert isinstance(strategy, ssh_terminal.SingleAuthenticationStrategy)
-    source = list(strategy.get_sources())[0]
+    source = next(iter(strategy.get_sources()))
     assert isinstance(source, ssh_terminal.paramiko.InMemoryPrivateKey)
     assert source.username == 'terminal'
     assert source.pkey == (key, None, loaded_key)
@@ -448,7 +489,7 @@ def test_password_mode_offers_only_the_entered_password(monkeypatch, tmp_path: P
     gateway()._open_ssh_connection(settings, None, known_hosts, None, 'session secret', 80, 24)
 
     strategy = connection_options['auth_strategy']
-    source = list(strategy.get_sources())[0]
+    source = next(iter(strategy.get_sources()))
     assert isinstance(source, ssh_terminal.paramiko.Password)
     assert source.username == 'terminal'
     assert source.password_getter() == 'session secret'
@@ -471,7 +512,7 @@ def test_paramiko_output_decodes_split_utf8_without_corruption() -> None:
     async def send(message: dict[str, Any]) -> None:
         sent.append(message)
 
-    asyncio.run(gateway()._pump_output(Channel(), send, [0.0]))
+    asyncio.run(gateway()._pump_output(Channel(), send, ssh_terminal._ActivityClock(0.0)))
 
     payloads = [json.loads(message['text']) for message in sent]
     assert payloads == [
@@ -495,7 +536,58 @@ def test_terminal_browser_client_is_dependency_free_and_uses_safe_dom_apis() -> 
     assert 'sessionStorage' not in source
 
 
-def test_terminal_page_requires_proxy_identity_and_uses_isolated_csp(monkeypatch) -> None:
+def test_header_and_cookie_helpers_have_one_shared_implementation() -> None:
+    assert wake.decode_headers is http_utils.decode_headers
+    assert wake.parse_cookie_header is http_utils.parse_cookie_header
+    assert ssh_terminal.decode_headers is http_utils.decode_headers
+    assert ssh_terminal.parse_cookie_header is http_utils.parse_cookie_header
+    assert not hasattr(ssh_terminal, '_headers')
+    assert not hasattr(ssh_terminal, '_cookies')
+    assert not hasattr(wake.ProxyHeadersMiddleware, 'replace_header')
+
+
+def test_shared_cookie_parser_tolerates_malformed_headers() -> None:
+    assert http_utils.parse_cookie_header(None) == {}
+    assert http_utils.parse_cookie_header('') == {}
+    assert http_utils.parse_cookie_header('a') == {}
+    assert http_utils.parse_cookie_header('=v') == {'': 'v'}
+    assert http_utils.parse_cookie_header('a=b=c') == {'a': 'b=c'}
+    assert http_utils.parse_cookie_header(' csrf_token = value ; other=1') == {'csrf_token': 'value', 'other': '1'}
+
+
+def raw_response_headers(path: str, headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+    """Collect unflattened response headers so duplicate policies stay visible."""
+
+    async def exercise() -> list[tuple[bytes, bytes]]:
+        scope = {
+            'type': 'http',
+            'asgi': {'version': '3.0'},
+            'http_version': '1.1',
+            'method': 'GET',
+            'scheme': 'http',
+            'path': path,
+            'raw_path': path.encode(),
+            'query_string': b'device=desktop',
+            'headers': headers,
+            'client': ('127.0.0.1', 12345),
+            'server': ('127.0.0.1', 8080),
+        }
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return {'type': 'http.disconnect'}
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        await wake.app(scope, receive, send)
+        start = next(message for message in sent if message['type'] == 'http.response.start')
+        return list(start['headers'])
+
+    return asyncio.run(exercise())
+
+
+def test_terminal_page_requires_proxy_identity_and_uses_the_shared_csp(monkeypatch) -> None:
     settings = SSHSettings('host', 22, 'user', Path('/key'), Path('/known'), allowed_users=('jay',))
     computer = ComputerSettings(
         name='desktop',
@@ -512,17 +604,61 @@ def test_terminal_page_requires_proxy_identity_and_uses_isolated_csp(monkeypatch
 
     unauthenticated = client.get('/terminal?device=desktop')
     authenticated = client.get('/terminal?device=desktop', headers={'x-wake-user': 'jay'})
+    homepage = client.get('/')
 
     assert unauthenticated.status_code == 401
     assert authenticated.status_code == 200
     assert '<title>desktop terminal · Wake</title>' in authenticated.text
     assert '/static/terminal.js' in authenticated.text
     assert 'xterm' not in authenticated.text.lower()
-    csp = authenticated.headers['content-security-policy']
-    assert csp.startswith("default-src 'none'")
-    assert "script-src 'self'" in csp
-    assert 'cdnjs.cloudflare.com' not in csp
-    assert 'cdn.jsdelivr.net' not in csp
+    assert authenticated.headers['content-security-policy'] == homepage.headers['content-security-policy']
+    assert authenticated.headers['content-security-policy'] == wake.SECURITY_HEADERS['content-security-policy']
+
+
+def test_terminal_page_rejects_a_duplicated_device_parameter(monkeypatch) -> None:
+    settings = SSHSettings('host', 22, 'user', Path('/key'), Path('/known'), allowed_users=('jay',))
+    computer = ComputerSettings(
+        name='desktop',
+        mac='00:11:22:33:44:55',
+        ip='192.168.10.20',
+        wake=WakeSettings(),
+        probe=ProbeSettings(type='none', host=None),
+        ssh=settings,
+    )
+    monkeypatch.setattr(wake.terminal_gateway, 'enabled', True)
+    monkeypatch.setattr(wake.terminal_gateway, '_allowed_users', {'jay'})
+    monkeypatch.setattr(Computers, 'config', staticmethod(lambda: {'desktop': computer}))
+    client = wake.app.test_client()
+    headers = {'x-wake-user': 'jay'}
+
+    assert client.get('/terminal?device=desktop', headers=headers).status_code == 200
+    assert client.get('/terminal?device=desktop&device=other', headers=headers).status_code == 404
+    assert client.get('/terminal', headers=headers).status_code == 404
+
+
+def test_terminal_page_sends_exactly_one_content_security_policy(monkeypatch) -> None:
+    settings = SSHSettings('host', 22, 'user', Path('/key'), Path('/known'), allowed_users=('jay',))
+    computer = ComputerSettings(
+        name='desktop',
+        mac='00:11:22:33:44:55',
+        ip='192.168.10.20',
+        wake=WakeSettings(),
+        probe=ProbeSettings(type='none', host=None),
+        ssh=settings,
+    )
+    monkeypatch.setattr(wake.terminal_gateway, 'enabled', True)
+    monkeypatch.setattr(wake.terminal_gateway, '_allowed_users', {'jay'})
+    monkeypatch.setattr(Computers, 'config', staticmethod(lambda: {'desktop': computer}))
+    request_headers = [(b'host', b'localhost'), (b'x-wake-user', b'jay')]
+
+    terminal_headers = raw_response_headers('/terminal', request_headers)
+    homepage_headers = raw_response_headers('/', request_headers)
+
+    def policies(raw: list[tuple[bytes, bytes]]) -> list[bytes]:
+        return [value for key, value in raw if key.lower() == b'content-security-policy']
+
+    assert len(policies(terminal_headers)) == 1
+    assert policies(terminal_headers) == policies(homepage_headers)
 
 
 def test_password_terminal_page_prompts_without_embedding_a_credential(monkeypatch) -> None:

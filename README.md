@@ -147,8 +147,13 @@ The app looks for configuration in:
 - `computers.yaml`
 - `/var/www/html/wake/computers.yaml`
 
-Production-facing security settings are driven by environment variables:
+Production-facing runtime and security settings are driven by environment variables:
 
+- `WAKE_BIND_HOST`
+  Address used by the built-in development server. Defaults to `127.0.0.1` so
+  the reverse proxy remains the only production entry point.
+- `WAKE_BIND_PORT`
+  Port used by the built-in development server. Defaults to `8080`.
 - `WAKE_ALLOWED_HOSTS`
   Comma-separated allowed hostnames for Flasgo's host-header enforcement.
   Example: `WAKE_ALLOWED_HOSTS=wake.example.com,.example.com`
@@ -158,6 +163,11 @@ Production-facing security settings are driven by environment variables:
 - `WAKE_TRUST_PROXY_IPS`
   Comma-separated proxy IPs whose `Forwarded` / `X-Forwarded-*` headers should be trusted.
   Defaults to `127.0.0.1,::1`, which matches a local Caddy or Nginx instance.
+- `WAKE_STATUS_REFRESH_MIN_INTERVAL`
+  Minimum seconds between forced probes of the same device through `/status?refresh=`.
+  Defaults to `5`. Because `/status` is unauthenticated, this floor stops a caller from
+  looping the parameter to amplify ICMP or TCP probes at your network. Set it to `0` to
+  disable the floor.
 - `WAKE_TERMINAL_ENABLED`
   Set to `1` to register the authenticated browser SSH gateway. It is off by
   default and fails startup unless `WAKE_TERMINAL_USERS` is also set.
@@ -246,7 +256,10 @@ Start the built-in Flasgo development server:
 uv run python wake.py
 ```
 
-By default the app listens on `0.0.0.0:8080`.
+By default the app listens on `127.0.0.1:8080`. Set `WAKE_BIND_HOST` or
+`WAKE_BIND_PORT` to override the built-in server address. Keep the host on
+loopback or a private service network in production so clients cannot bypass the
+authenticating reverse proxy.
 
 The wake action uses Flasgo's CSRF protection. The page JavaScript reads the CSRF cookie set on `GET /` and sends it back in the `X-CSRF-Token` header on `POST /`.
 
@@ -264,7 +277,9 @@ Routes provided by the app:
 - `POST /` sends a Wake-on-LAN packet for the selected machine
 - `/status` returns backward-compatible JSON state strings with ETag support and `Cache-Control: max-age=30`
 - `/status?details=1` adds check time, latency, last-online time, and probe errors
-- `/status?details=1&refresh=<name>` bypasses the selected device's status cache
+- `/status?details=1&refresh=<name>` bypasses the selected device's status cache, subject to
+  the `WAKE_STATUS_REFRESH_MIN_INTERVAL` floor per device; a throttled device returns its
+  cached result with a normal `200`. `refresh=*` refreshes every device under the same floor.
 - `/terminal?device=<name>` renders the isolated, authenticated SSH terminal page
 - `/ws/terminal?device=<name>` carries its authenticated WebSocket protocol
 - `/static/<path>` is served by Flasgo's built-in static file support
@@ -480,13 +495,21 @@ The app customizes the Content Security Policy to allow the current frontend lib
 
 External assets use Subresource Integrity attributes, and the runtime test suite checks that the rendered page still matches the expected CSP and CDN allowlist.
 
-The higher-risk terminal page uses a separate scripting context and stricter CSP:
-it loads only local scripts and styles, allows WebSocket connections only to the
-same origin, and has no CDN, inline-script, frame, object, form, or base-URI
-permissions. Its terminal renderer is dependency-free JavaScript served directly
-from `static/terminal.js`; there is no Node.js, npm, bundler, generated browser
-bundle, or JavaScript package installation step. Paramiko and every other runtime
-dependency are installed and locked through `uv` and PyPI.
+Every route, including the terminal page, is served under that single app-wide
+policy; there is no per-route CSP override to audit separately. The terminal page
+still loads no third-party or inline code of its own: its renderer is
+dependency-free JavaScript served directly from `static/terminal.js`, so nothing
+is actually fetched from the CDN hosts the shared policy permits. There is no
+Node.js, npm, bundler, generated browser bundle, or JavaScript package
+installation step. Paramiko and every other runtime dependency are installed and
+locked through `uv` and PyPI.
+
+The shared policy keeps every route non-framable with `frame-ancestors 'none'`
+and disables plugins with `object-src 'none'`. Compared with its former
+route-specific policy, the terminal page inherits the homepage's CDN source
+allowlist, inline-style permission, `base-uri 'self'`, and `form-action 'self'`.
+The terminal template does not load third-party code or submit a form, so those
+broader shared permissions are not exercised there.
 
 The design and control mapping are documented in [SECURITY.md](SECURITY.md). The
 OWASP Top 10 is an awareness framework rather than a certification; the mapping
@@ -509,6 +532,7 @@ uv run ruff format --check .
 Those tests verify:
 
 - homepage responses include exactly one CSP header
+- the terminal page sends exactly one CSP header, identical to the homepage policy
 - the CSP allows the expected CDN hosts
 - Flasgo's hardened default headers are present on the homepage
 - external CSS and JS assets include `integrity`

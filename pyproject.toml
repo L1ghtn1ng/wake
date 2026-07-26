@@ -37,7 +37,6 @@ python-preference = "managed"
 [tool.ruff]
 # Exclude a variety of commonly ignored directories.
 exclude = [
-    "tests",
     ".eggs",
     ".git",
     ".git-rewrite",
@@ -68,11 +67,15 @@ select = ["E4",
     "F",
     "I",
     "UP",
-    "TCH",
+    "TC",
     "RUF",
     "PT",
+    "ASYNC",
+    "B",
+    "S",
+    "SIM",
     ]
-ignore = ["E721", "F403", "F405", "UP030"]
+ignore = ["E721", "UP030"]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
 fixable = ["ALL"]
@@ -80,6 +83,10 @@ unfixable = []
 
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests rely on assert, hard-coded sample credentials, and stubs that mirror asyncio signatures.
+"tests/*" = ["S101", "S105", "S106", "S108", "ASYNC109"]
 
 [tool.ruff.format]
 quote-style = "single"

@@ -44,11 +44,11 @@ WebSocket controls follow the official
 | Category | Controls in the SSH terminal |
 | --- | --- |
 | A01 Broken Access Control | Deny-by-default feature gate, trusted-proxy identity, global and per-device allowlists, server-side target lookup, exact Origin/Host checks, and no arbitrary destination input. |
-| A02 Security Misconfiguration | Startup rejects an enabled terminal without an identity allowlist; invalid header names and unknown YAML keys fail closed; production requires WSS; the terminal page has a local-only, deny-first CSP. |
+| A02 Security Misconfiguration | Startup rejects an enabled terminal without an identity allowlist; invalid header names and unknown YAML keys fail closed; production requires WSS; a single app-wide CSP covers every route, so no per-route override can silently diverge from the reviewed policy. |
 | A03 Software Supply Chain Failures | Paramiko and its Python dependencies are exact-pinned in `uv.lock`; Dependabot covers the uv/PyPI dependency graph. The browser renderer has no third-party JavaScript dependencies, package manager, generated bundle, or runtime code download. |
 | A04 Cryptographic Failures | TLS/WSS protects browser traffic, including an entered password; SSHv2 protects the backend channel; host keys are mandatory and pinned; only the configured authentication source is offered. CBC/3DES ciphers and SHA-1/MD5 MAC fallbacks are explicitly disabled. |
 | A05 Injection | Browser input is written as bytes to an established Paramiko SSH channel, never interpolated into a local command; target fields are typed and allowlisted. Jinja autoescaping and the local renderer use DOM text nodes rather than `innerHTML`, do not evaluate code, and discard OSC/DCS payloads such as hyperlinks and clipboard controls. |
-| A06 Insecure Design | The high-privilege terminal has a separate minimal page and CSP; credentials never reach the browser; sessions have bounded duration, idle timeout, connection caps, message-size limits, rate limits, backpressure, and generic failures. |
+| A06 Insecure Design | The high-privilege terminal has a separate minimal page served under the shared app-wide CSP; credentials never reach the browser; sessions have bounded duration, idle timeout, connection caps, message-size limits, rate limits, backpressure, and generic failures. The shared policy keeps every route non-framable with `frame-ancestors 'none'` and disables plugins with `object-src 'none'`. The terminal inherits broader homepage source, style, base-URI, and same-origin form permissions, but its template loads no third-party code and submits no form. |
 | A07 Authentication Failures | The authenticating proxy establishes identity; Wake accepts it only from configured proxy IPs and an explicit identity allowlist; each device explicitly selects key or password authentication; passwords are bounded and sent once; a connection lasts at most 30 minutes before proxy authentication is required again. |
 | A08 Software or Data Integrity Failures | The terminal page does not execute CDN or dynamically downloaded code; its source is reviewed and served directly without a generated asset pipeline; `uv.lock` protects Python dependency resolution; SSH host-key verification protects server identity. |
 | A09 Security Logging and Alerting Failures | Structured metadata-only events cover rejected handshakes, session open/close, actor, target, proxy source, outcome, and duration. Terminal data, tokens, cookies, keys, passphrases, and entered SSH passwords are never logged. Operators must ship and alert on these logs. |
@@ -95,7 +95,12 @@ and connection limits. Alert on repeated `terminal_rejected`,
 - Wake's existing `/`, `POST /`, and `/status` routes are not authenticated by
   the application. The documented proxy authentication protects the whole site;
   do not expose those routes around the proxy if device inventory or wake actions
-  must be private.
+  must be private. Forced re-probing through `/status?refresh=` is limited to one
+  probe per device per `WAKE_STATUS_REFRESH_MIN_INTERVAL` seconds so the parameter
+  cannot be looped to amplify ICMP or TCP probes at the local network.
+- Blocked host and CSRF responses name the setting to change but no longer list
+  its configured values; the rejected value and the full allowlist are written to
+  the `wake.security` logger at `WARNING` instead.
 
 ## Reporting a vulnerability
 

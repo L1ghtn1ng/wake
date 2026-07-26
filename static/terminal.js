@@ -359,7 +359,7 @@
       if (this.cursorY < this.scrollTop || this.cursorY > this.scrollBottom) return;
       const amount = clamp(count, 1, this.scrollBottom - this.cursorY + 1);
       this.lines.splice(this.cursorY, amount);
-      for (let index = 0; index < amount; index += 1) this.lines.splice(this.scrollBottom, 0, this.createLine());
+      this.lines.splice(this.scrollBottom - amount + 1, 0, ...this.createLines(amount));
     }
 
     setScrollRegion(parameters) {
@@ -530,10 +530,13 @@
     status.dataset.state = state;
   }
 
-  function csrfToken() {
-    for (const part of document.cookie.split(';')) {
-      const [name, ...value] = part.trim().split('=');
-      if (name === 'flasgo-csrf') return value.join('=');
+  // Intentionally duplicated from getCookie() in script.js: the two pages share no bundle.
+  function getCookie(name) {
+    const encodedName = `${name}=`;
+    const cookies = document.cookie.split(';');
+    for (const cookie of cookies) {
+      const trimmed = cookie.trim();
+      if (trimmed.startsWith(encodedName)) return decodeURIComponent(trimmed.substring(encodedName.length));
     }
     return '';
   }
@@ -553,6 +556,10 @@
     dimensions = { cols, rows };
     renderer.resize(cols, rows);
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+  }
+
+  function capLocalInput(text) {
+    return text.length > MAX_LOCAL_PASTE ? text.slice(0, MAX_LOCAL_PASTE) : text;
   }
 
   function sendInput(data) {
@@ -621,20 +628,23 @@
     setStatus('Connecting…', 'connecting');
     const websocketScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const url = `${websocketScheme}://${window.location.host}/ws/terminal?device=${encodeURIComponent(computerName)}`;
-    socket = new WebSocket(url, 'wake-terminal-v1');
-    socket.addEventListener('open', () => {
-      const authorization = { type: 'auth', csrf: csrfToken(), ...dimensions };
+    const current = new WebSocket(url, 'wake-terminal-v1');
+    socket = current;
+    current.addEventListener('open', () => {
+      if (socket !== current) return;
+      const authorization = { type: 'auth', csrf: getCookie('flasgo-csrf'), ...dimensions };
       if (authentication === 'password') authorization.password = password;
-      socket.send(JSON.stringify(authorization));
+      current.send(JSON.stringify(authorization));
       password = null;
     });
-    socket.addEventListener('message', (event) => {
+    current.addEventListener('message', (event) => {
+      if (socket !== current) return;
       if (typeof event.data !== 'string') return;
       let message;
       try {
         message = JSON.parse(event.data);
       } catch {
-        socket.close(1002, 'Invalid server message');
+        current.close(1002, 'Invalid server message');
         return;
       }
       if (message.type === 'ready') {
@@ -644,7 +654,9 @@
       else if (message.type === 'error' && typeof message.message === 'string') setStatus(message.message, 'error');
       else if (message.type === 'exit') setStatus('Remote session ended', 'closed');
     });
-    socket.addEventListener('close', () => {
+    current.addEventListener('close', () => {
+      if (socket !== current) return;
+      socket = null;
       password = null;
       if (authentication === 'password') {
         showPasswordPrompt(status.dataset.state === 'error' ? status.textContent : 'Password required');
@@ -654,7 +666,8 @@
         disconnectButton.disabled = true;
       }
     });
-    socket.addEventListener('error', () => {
+    current.addEventListener('error', () => {
+      if (socket !== current) return;
       password = null;
       setStatus('Connection failed', 'error');
     });
@@ -673,18 +686,17 @@
   });
   input.addEventListener('compositionend', () => {
     composing = false;
-    if (input.value) sendInput(input.value);
+    if (input.value) sendInput(capLocalInput(input.value));
     input.value = '';
   });
   input.addEventListener('input', () => {
     if (composing) return;
-    if (input.value) sendInput(input.value);
+    if (input.value) sendInput(capLocalInput(input.value));
     input.value = '';
   });
   input.addEventListener('paste', (event) => {
     event.preventDefault();
-    let text = event.clipboardData?.getData('text/plain') ?? '';
-    if (text.length > MAX_LOCAL_PASTE) text = text.slice(0, MAX_LOCAL_PASTE);
+    let text = capLocalInput(event.clipboardData?.getData('text/plain') ?? '');
     if (renderer.bracketedPaste) text = `\x1b[200~${text}\x1b[201~`;
     sendInput(text);
   });

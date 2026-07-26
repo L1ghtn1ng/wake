@@ -7,7 +7,6 @@ import codecs
 import json
 import logging
 import os
-import secrets
 import stat
 import time
 from collections import defaultdict, deque
@@ -20,17 +19,14 @@ from urllib.parse import parse_qs, urlsplit
 import paramiko
 from flasgo.security import host_is_allowed
 
+from http_utils import CLIENT_IP_SCOPE_KEY, count_header, decode_headers, parse_cookie_header, tokens_match
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
 
 
 TERMINAL_SUBPROTOCOL = 'wake-terminal-v1'
-TERMINAL_PAGE_CSP = (
-    "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; "
-    "style-src-attr 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; "
-    "frame-ancestors 'none'; object-src 'none'"
-)
 MAX_CLIENT_MESSAGE_BYTES = 16 * 1024
 MAX_INPUT_BYTES = 8 * 1024
 MAX_MESSAGES_PER_WINDOW = 200
@@ -42,6 +38,15 @@ IDLE_TIMEOUT_SECONDS = 10 * 60
 MAX_SESSION_SECONDS = 30 * 60
 MAX_SESSIONS_TOTAL = 10
 MAX_SESSIONS_PER_USER = 2
+MAX_ACTOR_LENGTH = 128
+MAX_DEVICE_NAME_LENGTH = 200
+MAX_PASSWORD_BYTES = 1024
+OUTPUT_CHUNK_BYTES = 4 * 1024
+CHANNEL_READ_TIMEOUT_SECONDS = 1.0
+CLIENT_MESSAGE_POLL_SECONDS = 30
+CLOSE_REASON_MAX_LENGTH = 120
+# Any group or world permission bit on a private key file is rejected.
+PRIVATE_KEY_FORBIDDEN_MODE_BITS = 0o077
 DISABLED_SSH_ALGORITHMS = {
     'ciphers': ['aes128-cbc', 'aes192-cbc', 'aes256-cbc', '3des-cbc'],
     'macs': ['hmac-sha1', 'hmac-md5', 'hmac-sha1-96', 'hmac-md5-96'],
@@ -70,7 +75,7 @@ class HostKeyVerificationError(paramiko.SSHException):
     """An SSH server wasn't present in the configured known-hosts file."""
 
 
-class StrictHostKeyPolicy(paramiko.RejectPolicy):
+class StrictHostKeyPolicy(paramiko.MissingHostKeyPolicy):
     """Reject unknown host keys with an error safe to classify in audit logs."""
 
     def missing_host_key(self, client: Any, hostname: str, key: Any) -> None:
@@ -88,25 +93,26 @@ class SingleAuthenticationStrategy(paramiko.AuthStrategy):
         yield self._source
 
 
-def _headers(scope: Mapping[str, Any]) -> dict[str, str]:
-    return {key.decode('latin-1').lower(): value.decode('latin-1') for key, value in scope.get('headers', [])}
-
-
-def _cookies(cookie_header: str | None) -> dict[str, str]:
-    cookies: dict[str, str] = {}
-    if not cookie_header:
-        return cookies
-    for chunk in cookie_header.split(';'):
-        key, separator, value = chunk.strip().partition('=')
-        if separator and key:
-            cookies[key] = value
-    return cookies
-
-
 def _safe_dimensions(value: Any, *, minimum: int, maximum: int, default: int) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         return default
     return min(maximum, max(minimum, value))
+
+
+def _client_ip(scope: Mapping[str, Any]) -> str:
+    """Return the originating client IP a trusted proxy reported, else the direct peer."""
+    forwarded = scope.get(CLIENT_IP_SCOPE_KEY)
+    if isinstance(forwarded, str) and forwarded:
+        return forwarded
+    client = scope.get('client')
+    return client[0] if isinstance(client, tuple) and client else 'unknown'
+
+
+@dataclass(slots=True)
+class _ActivityClock:
+    """Last-activity timestamp shared by the input and output pumps."""
+
+    last: float
 
 
 class TerminalGateway:
@@ -142,13 +148,16 @@ class TerminalGateway:
             return None
         client = scope.get('client')
         client_ip = client[0] if isinstance(client, tuple) and client else None
-        if client_ip not in self._trusted_proxies:
-            if not self._is_direct_loopback(scope):
-                return None
-        headers = _headers(scope)
+        if client_ip not in self._trusted_proxies and not self._is_direct_loopback(scope):
+            return None
+        raw_headers = scope.get('headers', [])
+        # A duplicated identity header means the proxy did not overwrite a client-supplied copy.
+        if count_header(raw_headers, self._identity_header) > 1:
+            return None
+        headers = decode_headers(raw_headers)
         actor = headers.get(self._identity_header, '').strip()
         if actor:
-            if len(actor) > 128 or any(character in actor for character in '\r\n\x00'):
+            if len(actor) > MAX_ACTOR_LENGTH or any(character in actor for character in '\r\n\x00'):
                 return None
             if actor not in self._allowed_users:
                 return None
@@ -157,12 +166,10 @@ class TerminalGateway:
             return next(iter(self._allowed_users))
         return None
 
-    def _is_direct_loopback(
-        self, scope: Mapping[str, Any], headers: Mapping[str, str] | None = None
-    ) -> bool:
+    def _is_direct_loopback(self, scope: Mapping[str, Any], headers: Mapping[str, str] | None = None) -> bool:
         if not self.local_development:
             return False
-        headers = headers or _headers(scope)
+        headers = headers or decode_headers(scope.get('headers', []))
         if any(name in headers for name in ('forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto')):
             return False
         client = scope.get('client')
@@ -170,7 +177,9 @@ class TerminalGateway:
         client_host = client[0] if isinstance(client, tuple) and client else None
         server_host = server[0] if isinstance(server, tuple) and server else None
         try:
-            return bool(client_host and server_host and ip_address(client_host).is_loopback and ip_address(server_host).is_loopback)
+            return bool(
+                client_host and server_host and ip_address(client_host).is_loopback and ip_address(server_host).is_loopback
+            )
         except ValueError:
             return False
 
@@ -185,10 +194,9 @@ class TerminalGateway:
             await send({'type': 'websocket.close', 'code': 1008, 'reason': 'Unsupported WebSocket endpoint'})
             return
 
-        headers = _headers(scope)
+        headers = decode_headers(scope.get('headers', []))
         actor = self.actor(scope)
-        client = scope.get('client')
-        client_ip = client[0] if isinstance(client, tuple) and client else 'unknown'
+        client_ip = _client_ip(scope)
         device_name = parse_qs(scope.get('query_string', b'').decode('utf-8', 'replace')).get('device', [''])[-1]
         rejection = self._handshake_rejection(scope, headers, actor, device_name)
         if rejection:
@@ -222,7 +230,7 @@ class TerminalGateway:
             return
         await send({'type': 'websocket.accept', 'subprotocol': TERMINAL_SUBPROTOCOL})
 
-        cookie_token = _cookies(headers.get('cookie')).get(self._csrf_cookie_name)
+        cookie_token = parse_cookie_header(headers.get('cookie')).get(self._csrf_cookie_name)
         try:
             auth_message = await asyncio.wait_for(receive(), timeout=AUTH_TIMEOUT_SECONDS)
             columns, rows, password = self._validate_auth_message(auth_message, cookie_token, ssh)
@@ -259,6 +267,7 @@ class TerminalGateway:
             outcome = 'connection_failed'
             await self._error_and_close(send, 'SSH connection failed', 1011)
         except Exception:
+            outcome = 'unexpected_error'
             self._logger.exception('terminal_unexpected actor=%s device=%s source=%s', actor, device_name, client_ip)
             await self._error_and_close(send, 'Terminal session failed', 1011)
         finally:
@@ -301,7 +310,7 @@ class TerminalGateway:
         protocols = {item.strip() for item in headers.get('sec-websocket-protocol', '').split(',')}
         if TERMINAL_SUBPROTOCOL not in protocols:
             return 'Unsupported terminal protocol'
-        if not device_name or len(device_name) > 200:
+        if not device_name or len(device_name) > MAX_DEVICE_NAME_LENGTH:
             return 'Invalid terminal target'
         return None
 
@@ -312,13 +321,18 @@ class TerminalGateway:
         token = payload.get('csrf')
         if payload.get('type') != 'auth' or not isinstance(token, str) or not cookie_token:
             raise TerminalProtocolError('Terminal authorization failed')
-        if not secrets.compare_digest(token, cookie_token):
+        if not tokens_match(token, cookie_token):
             raise TerminalProtocolError('Terminal authorization failed')
         columns = _safe_dimensions(payload.get('cols'), minimum=20, maximum=MAX_TERMINAL_COLUMNS, default=80)
         rows = _safe_dimensions(payload.get('rows'), minimum=5, maximum=MAX_TERMINAL_ROWS, default=24)
         password = payload.get('password')
         if ssh.authentication == 'password':
-            if not isinstance(password, str) or not password or '\x00' in password or len(password.encode('utf-8')) > 1024:
+            if (
+                not isinstance(password, str)
+                or not password
+                or '\x00' in password
+                or len(password.encode('utf-8')) > MAX_PASSWORD_BYTES
+            ):
                 raise TerminalProtocolError('SSH password is required')
             return columns, rows, password
         if password is not None:
@@ -341,7 +355,8 @@ class TerminalGateway:
         return payload
 
     def _reserve(self, actor: str) -> bool:
-        if self._active_total >= MAX_SESSIONS_TOTAL or self._active_by_user[actor] >= MAX_SESSIONS_PER_USER:
+        # Read with get() so a rejected reservation cannot leave a zero entry behind.
+        if self._active_total >= MAX_SESSIONS_TOTAL or self._active_by_user.get(actor, 0) >= MAX_SESSIONS_PER_USER:
             return False
         self._active_total += 1
         self._active_by_user[actor] += 1
@@ -360,8 +375,8 @@ class TerminalGateway:
         if ssh.authentication == 'key':
             if ssh.private_key is None:
                 raise TerminalProtocolError('SSH private key is not configured')
-            private_key = self._validated_private_key(ssh.private_key)
-        known_hosts = self._validated_regular_file(ssh.known_hosts, 'known_hosts')
+            private_key = await asyncio.to_thread(self._validated_private_key, ssh.private_key)
+        known_hosts = await asyncio.to_thread(self._validated_regular_file, ssh.known_hosts, 'known_hosts')
         passphrase = os.getenv(ssh.passphrase_env) if ssh.passphrase_env else None
         if ssh.passphrase_env and passphrase is None:
             raise TerminalProtocolError('SSH key passphrase is not configured')
@@ -394,6 +409,7 @@ class TerminalGateway:
         try:
             client.load_system_host_keys(str(known_hosts))
             client.set_missing_host_key_policy(StrictHostKeyPolicy())
+            # The credential checks from _run_ssh_session are repeated here because this runs in a worker thread.
             if ssh.authentication == 'key':
                 if private_key is None:
                     raise TerminalProtocolError('SSH private key is not configured')
@@ -420,7 +436,7 @@ class TerminalGateway:
                 raise paramiko.SSHException('SSH transport did not become active')
             transport.set_keepalive(30)
             channel = client.invoke_shell(term='vt100', width=columns, height=rows)
-            channel.settimeout(1.0)
+            channel.settimeout(CHANNEL_READ_TIMEOUT_SECONDS)
             return client, channel
         except Exception:
             client.close()
@@ -441,14 +457,14 @@ class TerminalGateway:
         file_stat = resolved.stat()
         if hasattr(os, 'geteuid') and file_stat.st_uid != os.geteuid():
             raise TerminalProtocolError('SSH private key must be owned by the Wake service user')
-        if stat.S_IMODE(file_stat.st_mode) & 0o077:
+        if stat.S_IMODE(file_stat.st_mode) & PRIVATE_KEY_FORBIDDEN_MODE_BITS:
             raise TerminalProtocolError('SSH private key permissions must be 0600 or stricter')
         return resolved
 
     async def _bridge(self, client: Any, channel: Any, receive: Any, send: Any) -> None:
-        last_activity = [time.monotonic()]
-        output_task = asyncio.create_task(self._pump_output(channel, send, last_activity))
-        input_task = asyncio.create_task(self._pump_input(channel, receive, last_activity))
+        activity = _ActivityClock(time.monotonic())
+        output_task = asyncio.create_task(self._pump_output(channel, send, activity))
+        input_task = asyncio.create_task(self._pump_input(channel, receive, activity))
         tasks = {output_task, input_task}
         results: list[Any] = []
         try:
@@ -468,11 +484,11 @@ class TerminalGateway:
         with suppress(Exception):
             await send({'type': 'websocket.close', 'code': 1000, 'reason': 'Terminal session ended'})
 
-    async def _pump_output(self, channel: Any, send: Any, last_activity: list[float]) -> None:
+    async def _pump_output(self, channel: Any, send: Any, activity: _ActivityClock) -> None:
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         while True:
             try:
-                data = await asyncio.to_thread(channel.recv, 4096)
+                data = await asyncio.to_thread(channel.recv, OUTPUT_CHUNK_BYTES)
             except TimeoutError:
                 if channel.closed:
                     data = b''
@@ -484,22 +500,22 @@ class TerminalGateway:
                     await self._send_json(send, {'type': 'output', 'data': remaining})
                 await self._send_json(send, {'type': 'exit'})
                 return
-            last_activity[0] = time.monotonic()
+            activity.last = time.monotonic()
             output = decoder.decode(data)
             if output:
                 await self._send_json(send, {'type': 'output', 'data': output})
 
-    async def _pump_input(self, channel: Any, receive: Any, last_activity: list[float]) -> None:
+    async def _pump_input(self, channel: Any, receive: Any, activity: _ActivityClock) -> None:
         started = time.monotonic()
         message_times: deque[float] = deque()
         while True:
             now = time.monotonic()
             if now - started >= MAX_SESSION_SECONDS:
                 raise TerminalProtocolError('Maximum terminal session duration reached')
-            if now - last_activity[0] >= IDLE_TIMEOUT_SECONDS:
+            if now - activity.last >= IDLE_TIMEOUT_SECONDS:
                 raise TerminalProtocolError('Terminal session closed after inactivity')
             try:
-                message = await asyncio.wait_for(receive(), timeout=30)
+                message = await asyncio.wait_for(receive(), timeout=CLIENT_MESSAGE_POLL_SECONDS)
             except TimeoutError:
                 continue
             if message.get('type') == 'websocket.disconnect':
@@ -518,12 +534,12 @@ class TerminalGateway:
                 if not isinstance(data, str) or len(data.encode('utf-8')) > MAX_INPUT_BYTES:
                     raise TerminalProtocolError('Invalid terminal input')
                 await asyncio.to_thread(channel.sendall, data.encode('utf-8'))
-                last_activity[0] = now
+                activity.last = now
             elif message_type == 'resize':
                 columns = _safe_dimensions(payload.get('cols'), minimum=20, maximum=MAX_TERMINAL_COLUMNS, default=80)
                 rows = _safe_dimensions(payload.get('rows'), minimum=5, maximum=MAX_TERMINAL_ROWS, default=24)
                 await asyncio.to_thread(channel.resize_pty, width=columns, height=rows)
-                last_activity[0] = now
+                activity.last = now
             else:
                 raise TerminalProtocolError('Unsupported terminal message')
 
@@ -535,4 +551,4 @@ class TerminalGateway:
         with suppress(Exception):
             await self._send_json(send, {'type': 'error', 'message': message})
         with suppress(Exception):
-            await send({'type': 'websocket.close', 'code': code, 'reason': message[:120]})
+            await send({'type': 'websocket.close', 'code': code, 'reason': message[:CLOSE_REASON_MAX_LENGTH]})

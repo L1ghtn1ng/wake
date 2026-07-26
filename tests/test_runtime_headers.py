@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
@@ -69,6 +70,25 @@ def test_runtime_headers_and_assets() -> None:
     status_cached = client.get('/status', headers={'if-none-match': etag})
     assert status_cached.status_code == 304
     assert status_cached.headers.get('etag') == etag
+
+
+def test_content_security_policy_locks_down_embedding_and_plugins() -> None:
+    csp = app.test_client().get('/').headers['content-security-policy']
+    directives = {
+        part.split(' ', 1)[0]: part.split(' ', 1)[1] if ' ' in part else ''
+        for part in (item.strip() for item in csp.split(';'))
+        if part
+    }
+
+    assert directives['object-src'] == "'none'"
+    assert directives['form-action'] == "'self'"
+    assert directives['frame-ancestors'] == "'none'"
+    assert directives['img-src'] == "'self' data:"
+    assert directives['base-uri'] == "'self'"
+    assert directives['connect-src'] == "'self'"
+    # 'report-sample' only does something with a reporting endpoint, and w3.org/svg/2000 is an xmlns, not a host.
+    assert 'report-sample' not in csp
+    assert 'w3.org' not in csp
 
 
 def test_send_mac_uses_form_parsing_and_redirects(monkeypatch) -> None:
@@ -237,14 +257,49 @@ def test_send_mac_accepts_missing_origin_with_form_csrf_token(monkeypatch) -> No
     assert sent_packets == ['30:5a:3a:56:57:58']
 
 
-def test_bad_host_header_returns_actionable_message() -> None:
+def test_bad_host_header_returns_actionable_message_without_disclosing_config(caplog) -> None:
     client = app.test_client()
+    allowed_hosts = sorted(app.security.allowed_hosts)
+    assert allowed_hosts, 'the fixture app must configure at least one allowed host'
 
-    response = client.get('/', headers={'host': 'wake.example.com'})
+    with caplog.at_level(logging.WARNING, logger='wake.security'):
+        response = client.get('/', headers={'host': 'wake.example.com'})
 
     assert response.status_code == 400
     assert 'WAKE_ALLOWED_HOSTS' in response.text
     assert 'wake.example.com' in response.text
+    for allowed_host in allowed_hosts:
+        assert allowed_host not in response.text
+    logged = '\n'.join(record.getMessage() for record in caplog.records)
+    assert 'host_rejected' in logged
+    assert 'wake.example.com' in logged
+    for allowed_host in allowed_hosts:
+        assert allowed_host in logged
+
+
+def test_untrusted_origin_message_names_the_setting_without_listing_it(monkeypatch, caplog) -> None:
+    monkeypatch.setattr(app.security, 'csrf_trusted_origins', ['https://trusted.example.com'])
+    scope = {
+        'type': 'http',
+        'method': 'POST',
+        'scheme': 'http',
+        'path': '/',
+        'headers': [
+            (b'host', b'localhost'),
+            (b'origin', b'http://localhost'),
+            (b'cookie', f'{app.security.csrf_cookie_name}=token-value'.encode()),
+            (app.security.csrf_header_name.lower().encode(), b'token-value'),
+        ],
+    }
+
+    with caplog.at_level(logging.WARNING, logger='wake.security'):
+        message = app.csrf_error_message(scope)
+
+    assert 'WAKE_CSRF_TRUSTED_ORIGINS' in message
+    assert 'trusted.example.com' not in message
+    logged = '\n'.join(record.getMessage() for record in caplog.records)
+    assert 'csrf_origin_rejected' in logged
+    assert 'https://trusted.example.com' in logged
 
 
 def test_csrf_failure_returns_proxy_guidance() -> None:
@@ -361,7 +416,7 @@ def test_trusted_proxy_ignores_unsafe_forwarded_host() -> None:
         ],
     }
 
-    updated = app.proxyAwareScope(scope)
+    updated = app.proxy_aware_scope(scope)
     host_values = [value for key, value in updated['headers'] if key.lower() == b'host']
     assert host_values == [b'localhost']
     assert updated.get('scheme') == 'https'
@@ -379,6 +434,6 @@ def test_same_origin_fallback_rejects_unsafe_host() -> None:
         ],
     }
 
-    updated = app.addSameOriginFallbackHeaders(scope)
+    updated = app.add_same_origin_fallback_headers(scope)
     assert updated is scope
     assert not any(key.lower() == b'origin' for key, _ in updated.get('headers', []))

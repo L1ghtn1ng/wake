@@ -166,6 +166,7 @@ function formatTimestamp(timestamp) {
     return date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
 }
 
+// Intentionally duplicated in terminal.js: the two pages share no bundle.
 function getCookie(name) {
     const encodedName = `${name}=`;
     const cookies = document.cookie.split(';');
