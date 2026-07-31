@@ -476,9 +476,9 @@ class ProxyHeadersMiddleware:
 
         if security.csrf_trusted_origins:
             _security_logger.warning(
-                'csrf_origin_rejected origin=%r trusted_origins=%s',
+                'csrf_origin_rejected origin=%r trusted_origins_count=%d',
                 origin_display,
-                ', '.join(sorted(security.csrf_trusted_origins)) or '<empty>',
+                len(security.csrf_trusted_origins),
             )
             return (
                 f'Request blocked by CSRF protection because the origin {origin_display} is not allowed. '
