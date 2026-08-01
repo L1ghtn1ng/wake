@@ -5,9 +5,11 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from wake import MAX_MUTATING_REQUEST_BODY_BYTES, app
+from wake import MAX_MUTATING_REQUEST_BODY_BYTES, app, metrics_bearer_token_from_env
 
 ALLOWED_CDN_HOSTS = {'cdnjs.cloudflare.com', 'cdn.jsdelivr.net'}
 LOCAL_PREFIXES = ('/static/', '/', '#')
@@ -89,6 +91,54 @@ def test_content_security_policy_locks_down_embedding_and_plugins() -> None:
     # 'report-sample' only does something with a reporting endpoint, and w3.org/svg/2000 is an xmlns, not a host.
     assert 'report-sample' not in csp
     assert 'w3.org' not in csp
+
+
+def test_flasgo_metrics_require_bearer_token_and_use_bounded_labels() -> None:
+    client = app.test_client()
+
+    assert app.settings.METRICS_ENABLED is True
+    assert app.settings.METRICS_PATH == '/metrics'
+    metrics_token = app.settings.METRICS_BEARER_TOKEN
+    assert isinstance(metrics_token, str)
+    assert len(metrics_token) >= 32
+
+    missing_token = client.get('/metrics')
+    wrong_token = client.get('/metrics', headers={'authorization': 'Bearer wrong-token'})
+    client.get('/status')
+    metrics = client.get('/metrics', headers={'authorization': f'Bearer {metrics_token}'})
+
+    assert missing_token.status_code == 401
+    assert missing_token.headers['www-authenticate'] == 'Bearer'
+    assert wrong_token.status_code == 401
+    assert metrics.status_code == 200
+    assert metrics.headers['content-type'].startswith('text/plain; version=')
+    assert 'flasgo_http_requests_total{method="GET",route="/status",status="200"}' in metrics.text
+    assert 'route="/metrics"' not in metrics.text
+
+
+@pytest.mark.parametrize(
+    'token',
+    [
+        '',
+        'a' * 31,
+        ' ' + 'a' * 32,
+        'a' * 32 + ' ',
+        'é' * 32,
+        'a' * 31 + '!',
+    ],
+)
+def test_metrics_bearer_token_rejects_values_that_cannot_authenticate(monkeypatch, token: str) -> None:
+    monkeypatch.setenv('FLASGO_METRICS_TOKEN', token)
+
+    with pytest.raises(ValueError, match='bearer-safe ASCII characters without whitespace'):
+        metrics_bearer_token_from_env()
+
+
+@pytest.mark.parametrize('token', ['a' * 32, 'Ab9._~+/-' * 4, 'a' * 32 + '=='])
+def test_metrics_bearer_token_preserves_valid_values(monkeypatch, token: str) -> None:
+    monkeypatch.setenv('FLASGO_METRICS_TOKEN', token)
+
+    assert metrics_bearer_token_from_env() == token
 
 
 def test_send_mac_uses_form_parsing_and_redirects(monkeypatch) -> None:
@@ -299,7 +349,8 @@ def test_untrusted_origin_message_names_the_setting_without_listing_it(monkeypat
     assert 'trusted.example.com' not in message
     logged = '\n'.join(record.getMessage() for record in caplog.records)
     assert 'csrf_origin_rejected' in logged
-    assert 'https://trusted.example.com' in logged
+    assert 'trusted_origins_count=1' in logged
+    assert 'https://trusted.example.com' not in logged
 
 
 def test_csrf_failure_returns_proxy_guidance() -> None:

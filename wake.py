@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.parse import parse_qs, urlsplit
 
 import yaml
-from flasgo import Flasgo, Request, Response, Settings, redirect
+from flasgo import Flasgo, Request, Response, Settings, WebSocket, redirect
 from wakeonlan import create_magic_packet
 from wakeonlan import wake as send_magic_packet
 
@@ -36,7 +36,13 @@ from http_utils import (
     replace_header,
     tokens_match,
 )
-from ssh_terminal import SSHSettings, TerminalGateway
+from ssh_terminal import (
+    MAX_CLIENT_MESSAGE_BYTES,
+    MAX_MESSAGES_PER_WINDOW,
+    MESSAGE_RATE_WINDOW_SECONDS,
+    SSHSettings,
+    TerminalGateway,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -71,6 +77,14 @@ def parse_bool_env(name: str, *, default: bool = False) -> bool:
     raise ValueError(f'{name} must be one of: 1, 0, true, false, yes, no, on, off')
 
 
+def metrics_bearer_token_from_env() -> str:
+    """Load a bearer-safe metrics token without silently normalizing it."""
+    token = os.getenv('FLASGO_METRICS_TOKEN', '')
+    if len(token) < 32 or re.fullmatch(r'[A-Za-z0-9._~+/-]+=*', token) is None:
+        raise ValueError('FLASGO_METRICS_TOKEN must contain at least 32 bearer-safe ASCII characters without whitespace')
+    return token
+
+
 # Wake only needs small form posts (device name + CSRF). Cap buffered bodies to limit memory use.
 MAX_MUTATING_REQUEST_BODY_BYTES = 256 * 1024
 # Only these statuses are rewritten with actionable text, so every other response streams untouched.
@@ -86,11 +100,10 @@ FLASGO_SECURITY_RATE_LIMIT_BODY = 'Too many failed security checks'
 class ProxyHeadersMiddleware:
     """Trust loopback proxy headers so CSRF and redirects stay correct behind Caddy."""
 
-    def __init__(self, app: ASGIApplication, *, trusted_proxies: set[str], terminal_gateway: TerminalGateway) -> None:
+    def __init__(self, app: ASGIApplication, *, trusted_proxies: set[str]) -> None:
         # Flasgo exposes security settings in addition to the standard ASGI call interface.
         self._app: Any = app
         self._trusted_proxies = trusted_proxies
-        self._terminal_gateway = terminal_gateway
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._app, name)
@@ -102,9 +115,6 @@ class ProxyHeadersMiddleware:
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         proxied_scope = self.proxy_aware_scope(scope)
-        if proxied_scope.get('type') == 'websocket':
-            await self._terminal_gateway(proxied_scope, receive, send)
-            return
         prepared = await self.add_csrf_header_from_form(proxied_scope, receive)
         if prepared is None:
             await self.send_plain_text_error(send, 413, 'Request body too large')
@@ -509,7 +519,16 @@ base_app = Flasgo(
         'ALLOWED_HOSTS': parse_csv_env('WAKE_ALLOWED_HOSTS') or {'127.0.0.1', 'localhost'},
         'CSRF_COOKIE_SECURE': not TERMINAL_LOCAL_DEVELOPMENT,
         'CSRF_TRUSTED_ORIGINS': parse_csv_env('WAKE_CSRF_TRUSTED_ORIGINS'),
+        'METRICS_ENABLED': True,
+        'METRICS_PATH': '/metrics',
+        'METRICS_BEARER_TOKEN': metrics_bearer_token_from_env(),
         'SECURITY_HEADERS': SECURITY_HEADERS,
+        # Flasgo owns the WebSocket handshake and enforces the same bounds as Wake's
+        # terminal protocol. Wake retains the tighter ten-second burst limit below.
+        'WEBSOCKET_ENFORCE_ORIGIN': True,
+        'WEBSOCKET_ALLOW_MISSING_ORIGIN': False,
+        'WEBSOCKET_MAX_MESSAGE_BYTES': MAX_CLIENT_MESSAGE_BYTES,
+        'WEBSOCKET_MAX_MESSAGES_PER_MINUTE': MAX_MESSAGES_PER_WINDOW * int(60 / MESSAGE_RATE_WINDOW_SECONDS),
     },
     static_folder=STATIC_DIR,
 )
@@ -530,7 +549,6 @@ terminal_gateway = TerminalGateway(
     settings_loader=lambda: Computers.config(),
     enabled=TERMINAL_ENABLED,
     trusted_proxies=TRUSTED_PROXIES,
-    allowed_hosts=base_app.security.allowed_hosts,
     allowed_users=TERMINAL_USERS,
     identity_header=TERMINAL_IDENTITY_HEADER,
     csrf_cookie_name=base_app.security.csrf_cookie_name,
@@ -539,7 +557,6 @@ terminal_gateway = TerminalGateway(
 app = ProxyHeadersMiddleware(
     base_app,
     trusted_proxies=TRUSTED_PROXIES,
-    terminal_gateway=terminal_gateway,
 )
 
 # Global caches for parsed configuration and status results.
@@ -1095,6 +1112,12 @@ async def terminal_page(request: Request) -> Response:
             'local_development': terminal_gateway.local_development,
         },
     )
+
+
+@app.websocket('/ws/terminal')
+async def terminal_websocket(websocket: WebSocket) -> None:
+    """Bridge Flasgo's bounded WebSocket API to the allowlisted SSH gateway."""
+    await terminal_gateway(websocket)
 
 
 @app.post('/')

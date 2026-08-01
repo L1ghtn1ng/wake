@@ -7,13 +7,15 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from flasgo import WebSocket, WebSocketDisconnect
+from flasgo.testing import WebSocketHandshakeError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import http_utils
 import ssh_terminal
 import wake
-from ssh_terminal import SSHSettings, TerminalGateway, TerminalProtocolError
+from ssh_terminal import MAX_CLIENT_MESSAGE_BYTES, SSHSettings, TerminalGateway, TerminalProtocolError
 from wake import Computers, ComputerSettings, ConfigurationError, ProbeSettings, WakeSettings
 
 
@@ -23,7 +25,6 @@ def gateway(*, settings: SSHSettings | None = None, local_development: bool = Fa
         settings_loader=lambda: {'desktop': computer},
         enabled=True,
         trusted_proxies={'127.0.0.1'},
-        allowed_hosts={'localhost'},
         allowed_users={'jay'},
         identity_header='X-Wake-User',
         csrf_cookie_name='flasgo-csrf',
@@ -48,12 +49,16 @@ def websocket_scope(*, origin: str = 'https://localhost', actor: str | None = 'j
         'server': ('127.0.0.1', 443),
         'query_string': b'device=desktop',
         'headers': headers,
+        'subprotocols': ['wake-terminal-v1'],
     }
 
 
 async def run_gateway(
     terminal_gateway: TerminalGateway, scope: dict[str, Any], events: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
+    events = list(events)
+    if not events or events[0].get('type') != 'websocket.connect':
+        events.insert(0, {'type': 'websocket.connect'})
     sent: list[dict[str, Any]] = []
 
     async def receive() -> dict[str, Any]:
@@ -64,8 +69,40 @@ async def run_gateway(
     async def send(message: dict[str, Any]) -> None:
         sent.append(message)
 
-    await terminal_gateway(scope, receive, send)
+    websocket = WebSocket(
+        scope,
+        receive,
+        send,
+        max_message_bytes=MAX_CLIENT_MESSAGE_BYTES,
+        max_messages_per_minute=1200,
+    )
+    await websocket.receive_connect()
+    await terminal_gateway(websocket)
     return sent
+
+
+class RecordingWebSocket:
+    """Small Flasgo WebSocket stand-in for SSH bridge unit tests."""
+
+    def __init__(self, incoming: list[Any] | None = None) -> None:
+        self.incoming = list(incoming or [])
+        self.sent: list[dict[str, Any]] = []
+        self.closed: list[tuple[int, str]] = []
+
+    async def receive_json(self) -> Any:
+        if not self.incoming:
+            await asyncio.Event().wait()
+            raise AssertionError('unreachable')
+        value = self.incoming.pop(0)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    async def send_json(self, value: Any) -> None:
+        self.sent.append(value)
+
+    async def close(self, code: int = 1000, reason: str = '') -> None:
+        self.closed.append((code, reason))
 
 
 def test_parse_config_accepts_allowlisted_pinned_ssh_target() -> None:
@@ -195,6 +232,21 @@ def test_audit_logs_name_the_forwarded_client_not_the_proxy(caplog) -> None:
     assert 'source=127.0.0.1' not in logged
 
 
+@pytest.mark.parametrize('encoded_control', ['%0Aforged%3Dtrue', '%09forged%3Dtrue', '%1Bforged%3Dtrue'])
+def test_rejected_terminal_target_cannot_forge_audit_log_lines(caplog, encoded_control: str) -> None:
+    scope = websocket_scope()
+    scope['query_string'] = f'device=desktop{encoded_control}'.encode()
+
+    with caplog.at_level(logging.WARNING, logger='wake.terminal.audit'):
+        asyncio.run(run_gateway(gateway(), scope, []))
+
+    logged = '\n'.join(record.getMessage() for record in caplog.records)
+    assert 'device=invalid' in logged
+    assert '\nforged=true' not in logged
+    assert '\tforged=true' not in logged
+    assert '\x1bforged=true' not in logged
+
+
 def test_proxy_headers_expose_the_forwarded_client_ip_to_the_gateway() -> None:
     scope = websocket_scope()
     scope['headers'].append((b'x-forwarded-for', b'192.0.2.10, 10.0.0.1'))
@@ -215,7 +267,7 @@ def test_local_development_auto_authenticates_only_direct_loopback() -> None:
     assert terminal_gateway.actor(scope) == 'jay'
     assert (
         terminal_gateway._handshake_rejection(
-            scope, http_utils.decode_headers(scope['headers']), terminal_gateway.actor(scope), 'desktop'
+            scope, http_utils.decode_headers(scope['headers']), terminal_gateway.actor(scope), ['desktop']
         )
         is None
     )
@@ -229,9 +281,47 @@ def test_local_development_auto_authenticates_only_direct_loopback() -> None:
 
 
 def test_websocket_rejects_cross_site_origin_before_accepting() -> None:
-    sent = asyncio.run(run_gateway(gateway(), websocket_scope(origin='https://evil.example'), []))
+    with (
+        wake.app.test_client() as client,
+        pytest.raises(WebSocketHandshakeError) as denied,
+        client.websocket_connect(
+            '/ws/terminal?device=desktop',
+            headers={'x-wake-user': 'jay'},
+            origin='https://evil.example',
+            subprotocols=['wake-terminal-v1'],
+            scheme='wss',
+        ),
+    ):
+        pass
 
-    assert sent == [{'type': 'websocket.close', 'code': 1008, 'reason': 'Untrusted WebSocket origin'}]
+    assert denied.value.status_code == 403
+    assert denied.value.body == b'Forbidden'
+
+
+@pytest.mark.parametrize(
+    ('headers', 'origin', 'expected_status'),
+    [
+        ({'host': 'evil.example'}, 'https://evil.example', 400),
+        ({}, None, 403),
+    ],
+)
+def test_flasgo_rejects_invalid_websocket_handshakes_before_wake(
+    headers: dict[str, str], origin: str | None, expected_status: int
+) -> None:
+    with (
+        wake.app.test_client() as client,
+        pytest.raises(WebSocketHandshakeError) as denied,
+        client.websocket_connect(
+            '/ws/terminal?device=desktop',
+            headers=headers,
+            origin=origin,
+            subprotocols=['wake-terminal-v1'],
+            scheme='wss',
+        ),
+    ):
+        pass
+
+    assert denied.value.status_code == expected_status
 
 
 def test_proxy_headers_preserve_secure_websocket_origin() -> None:
@@ -280,18 +370,40 @@ def test_websocket_rejects_mismatched_csrf_message_before_ssh() -> None:
 
 
 def test_websocket_rejects_oversized_and_binary_messages() -> None:
-    terminal_gateway = gateway()
-    with pytest.raises(TerminalProtocolError, match='Invalid terminal message'):
-        terminal_gateway._decode_client_message({'type': 'websocket.receive', 'text': 'x' * (16 * 1024 + 1)})
-    with pytest.raises(TerminalProtocolError, match='Invalid terminal message'):
-        terminal_gateway._decode_client_message({'type': 'websocket.receive', 'bytes': b'input'})
+    async def exercise(event: dict[str, Any]) -> tuple[WebSocketDisconnect, list[dict[str, Any]]]:
+        events = [{'type': 'websocket.connect'}, event]
+        sent: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return events.pop(0)
+
+        async def send(message: dict[str, Any]) -> None:
+            sent.append(message)
+
+        websocket = WebSocket(
+            websocket_scope(),
+            receive,
+            send,
+            max_message_bytes=MAX_CLIENT_MESSAGE_BYTES,
+            max_messages_per_minute=1200,
+        )
+        await websocket.receive_connect()
+        await websocket.accept('wake-terminal-v1')
+        with pytest.raises(WebSocketDisconnect) as disconnected:
+            await websocket.receive_json()
+        return disconnected.value, sent
+
+    oversized, oversized_sent = asyncio.run(exercise({'type': 'websocket.receive', 'text': 'x' * (MAX_CLIENT_MESSAGE_BYTES + 1)}))
+    binary, binary_sent = asyncio.run(exercise({'type': 'websocket.receive', 'bytes': b'input'}))
+
+    assert oversized.code == 1009
+    assert oversized_sent[-1] == {'type': 'websocket.close', 'code': 1009, 'reason': 'Message too large'}
+    assert binary.code == 1003
+    assert binary_sent[-1] == {'type': 'websocket.close', 'code': 1003, 'reason': 'Text message required'}
 
 
 def test_terminal_dimensions_are_bounded_for_the_browser_renderer() -> None:
-    message = {
-        'type': 'websocket.receive',
-        'text': json.dumps({'type': 'auth', 'csrf': 'token', 'cols': 100_000, 'rows': 100_000}),
-    }
+    message = {'type': 'auth', 'csrf': 'token', 'cols': 100_000, 'rows': 100_000}
 
     settings = SSHSettings('host', 22, 'user', Path('/key'), Path('/known'))
 
@@ -300,15 +412,9 @@ def test_terminal_dimensions_are_bounded_for_the_browser_renderer() -> None:
 
 def test_password_authentication_requires_a_bounded_first_message_password() -> None:
     settings = SSHSettings('host', 22, 'user', None, Path('/known'), authentication='password')
-    valid = {
-        'type': 'websocket.receive',
-        'text': json.dumps({'type': 'auth', 'csrf': 'token', 'password': 'correct horse battery staple'}),
-    }
-    missing = {'type': 'websocket.receive', 'text': json.dumps({'type': 'auth', 'csrf': 'token'})}
-    oversized = {
-        'type': 'websocket.receive',
-        'text': json.dumps({'type': 'auth', 'csrf': 'token', 'password': 'x' * 1025}),
-    }
+    valid = {'type': 'auth', 'csrf': 'token', 'password': 'correct horse battery staple'}
+    missing = {'type': 'auth', 'csrf': 'token'}
+    oversized = {'type': 'auth', 'csrf': 'token', 'password': 'x' * 1025}
 
     assert gateway()._validate_auth_message(valid, 'token', settings) == (80, 24, 'correct horse battery staple')
     with pytest.raises(TerminalProtocolError, match='SSH password is required'):
@@ -327,8 +433,7 @@ def test_authorized_websocket_passes_password_only_to_password_session(monkeypat
         columns: int,
         rows: int,
         password: str | None,
-        _receive: Any,
-        _send: Any,
+        _websocket: WebSocket,
     ) -> None:
         captured.update(ssh=ssh, columns=columns, rows=rows, password=password)
 
@@ -345,6 +450,49 @@ def test_authorized_websocket_passes_password_only_to_password_session(monkeypat
 
     assert captured == {'ssh': settings, 'columns': 80, 'rows': 24, 'password': 'one-time secret'}
     assert 'one-time secret' not in json.dumps(sent)
+
+
+def test_application_uses_flasgo_websocket_route_and_test_client(monkeypatch) -> None:
+    settings = SSHSettings('host', 22, 'user', Path('/key'), Path('/known'), allowed_users=('jay',))
+    computer = SimpleNamespace(ssh=settings)
+    captured: dict[str, Any] = {}
+
+    async def fake_session(
+        ssh: SSHSettings,
+        columns: int,
+        rows: int,
+        password: str | None,
+        websocket: WebSocket,
+    ) -> None:
+        captured.update(ssh=ssh, columns=columns, rows=rows, password=password)
+        await websocket.send_json({'type': 'ready'})
+
+    monkeypatch.setattr(wake.terminal_gateway, 'enabled', True)
+    monkeypatch.setattr(wake.terminal_gateway, '_allowed_users', {'jay'})
+    monkeypatch.setattr(wake.terminal_gateway, '_settings_loader', lambda: {'desktop': computer})
+    monkeypatch.setattr(wake.terminal_gateway, '_run_ssh_session', fake_session)
+
+    with wake.app.test_client() as client:
+        with client.websocket_connect(
+            '/ws/terminal?device=desktop',
+            headers={'x-wake-user': 'jay', 'cookie': 'flasgo-csrf=correct-token'},
+            origin='https://localhost',
+            subprotocols=['wake-terminal-v1'],
+            scheme='wss',
+        ) as websocket:
+            assert websocket.accepted_subprotocol == 'wake-terminal-v1'
+            assert websocket.response_headers['x-request-id']
+            websocket.send_json({'type': 'auth', 'csrf': 'correct-token', 'cols': 100, 'rows': 40})
+            assert websocket.receive_json() == {'type': 'ready'}
+
+        metrics = client.get(
+            '/metrics',
+            headers={'authorization': f'Bearer {wake.app.settings.METRICS_BEARER_TOKEN}'},
+        )
+
+    assert captured == {'ssh': settings, 'columns': 100, 'rows': 40, 'password': None}
+    websocket_metrics = [line for line in metrics.text.splitlines() if line.startswith('flasgo_websocket_connections_total{')]
+    assert any('route="/ws/terminal"' in line for line in websocket_metrics)
 
 
 def test_private_key_must_not_be_group_or_world_readable(tmp_path: Path) -> None:
@@ -410,15 +558,8 @@ def test_ssh_connection_pins_host_key_and_disables_auth_fallbacks(monkeypatch, t
 
     monkeypatch.setattr(ssh_terminal.paramiko, 'SSHClient', Client)
     monkeypatch.setattr(ssh_terminal.paramiko.PKey, 'from_path', lambda path, password: (path, password, loaded_key))
-    sent: list[dict[str, Any]] = []
-
-    async def receive() -> dict[str, Any]:
-        return {'type': 'websocket.disconnect'}
-
-    async def send(message: dict[str, Any]) -> None:
-        sent.append(message)
-
-    asyncio.run(gateway()._run_ssh_session(settings, 80, 24, None, receive, send))
+    websocket = RecordingWebSocket()
+    asyncio.run(gateway()._run_ssh_session(settings, 80, 24, None, websocket))
 
     assert connection_options['hostname'] == 'host'
     assert connection_options['port'] == 2222
@@ -445,7 +586,35 @@ def test_ssh_connection_pins_host_key_and_disables_auth_fallbacks(monkeypatch, t
     assert connection_options['keepalive'] == 30
     assert shell_options == {'term': 'vt100', 'width': 80, 'height': 24, 'timeout': 1.0}
     assert connection_options['closed'] is True
-    assert json.loads(sent[0]['text']) == {'type': 'ready'}
+    assert websocket.sent[0] == {'type': 'ready'}
+
+
+def test_ssh_session_closes_resources_when_ready_delivery_fails(monkeypatch, tmp_path: Path) -> None:
+    known_hosts = tmp_path / 'known_hosts'
+    known_hosts.write_text('host ssh-ed25519 AAAA', encoding='utf-8')
+    settings = SSHSettings('host', 22, 'terminal', None, known_hosts, authentication='password')
+
+    class Resource:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    client = Resource()
+    channel = Resource()
+    terminal_gateway = gateway()
+    monkeypatch.setattr(terminal_gateway, '_open_ssh_connection', lambda *args: (client, channel))
+
+    class DisconnectedWebSocket(RecordingWebSocket):
+        async def send_json(self, value: Any) -> None:
+            raise WebSocketDisconnect(1006, 'Browser disconnected')
+
+    with pytest.raises(WebSocketDisconnect):
+        asyncio.run(terminal_gateway._run_ssh_session(settings, 80, 24, 'secret', DisconnectedWebSocket()))
+
+    assert client.closed is True
+    assert channel.closed is True
 
 
 def test_password_mode_offers_only_the_entered_password(monkeypatch, tmp_path: Path) -> None:
@@ -507,15 +676,10 @@ def test_paramiko_output_decodes_split_utf8_without_corruption() -> None:
         def recv(self, _size: int) -> bytes:
             return next(chunks)
 
-    sent: list[dict[str, Any]] = []
+    websocket = RecordingWebSocket()
+    asyncio.run(gateway()._pump_output(Channel(), websocket, ssh_terminal._ActivityClock(0.0)))
 
-    async def send(message: dict[str, Any]) -> None:
-        sent.append(message)
-
-    asyncio.run(gateway()._pump_output(Channel(), send, ssh_terminal._ActivityClock(0.0)))
-
-    payloads = [json.loads(message['text']) for message in sent]
-    assert payloads == [
+    assert websocket.sent == [
         {'type': 'output', 'data': 'price: '},
         {'type': 'output', 'data': '€\r\n'},
         {'type': 'exit'},

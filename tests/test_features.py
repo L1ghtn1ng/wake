@@ -465,7 +465,6 @@ def test_successful_responses_stream_without_being_buffered() -> None:
     middleware = wake.ProxyHeadersMiddleware(
         streaming_app,
         trusted_proxies=set(),
-        terminal_gateway=wake.terminal_gateway,
     )
     sent: list[dict[str, Any]] = []
 

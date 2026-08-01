@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import codecs
-import json
 import logging
 import os
 import stat
@@ -13,11 +12,10 @@ from collections import defaultdict, deque
 from contextlib import suppress
 from dataclasses import dataclass
 from ipaddress import ip_address
-from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import parse_qs, urlsplit
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 import paramiko
-from flasgo.security import host_is_allowed
+from flasgo import WebSocket, WebSocketDisconnect
 
 from http_utils import CLIENT_IP_SCOPE_KEY, count_header, decode_headers, parse_cookie_header, tokens_match
 
@@ -69,6 +67,16 @@ class SSHSettings:
 
 class TerminalProtocolError(ValueError):
     """A safe-to-return WebSocket protocol error."""
+
+
+class TerminalTransport(Protocol):
+    """The small Flasgo WebSocket surface used by the SSH bridge."""
+
+    async def receive_json(self) -> Any: ...
+
+    async def send_json(self, value: Any) -> None: ...
+
+    async def close(self, code: int = 1000, reason: str = '') -> None: ...
 
 
 class HostKeyVerificationError(paramiko.SSHException):
@@ -124,7 +132,6 @@ class TerminalGateway:
         settings_loader: Callable[[], Mapping[str, Any]],
         enabled: bool,
         trusted_proxies: set[str],
-        allowed_hosts: set[str],
         allowed_users: set[str],
         identity_header: str,
         csrf_cookie_name: str,
@@ -133,7 +140,6 @@ class TerminalGateway:
         self._settings_loader = settings_loader
         self.enabled = enabled
         self._trusted_proxies = trusted_proxies
-        self._allowed_hosts = allowed_hosts
         self._allowed_users = allowed_users
         self._identity_header = identity_header.lower()
         self._csrf_cookie_name = csrf_cookie_name
@@ -189,25 +195,26 @@ class TerminalGateway:
             return False
         return not settings.allowed_users or actor in settings.allowed_users
 
-    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope.get('type') != 'websocket' or scope.get('path') != '/ws/terminal':
-            await send({'type': 'websocket.close', 'code': 1008, 'reason': 'Unsupported WebSocket endpoint'})
-            return
-
-        headers = decode_headers(scope.get('headers', []))
+    async def __call__(self, websocket: WebSocket) -> None:
+        """Authorize and serve one Flasgo-managed terminal WebSocket."""
+        scope = websocket.scope
+        headers = websocket.headers
         actor = self.actor(scope)
         client_ip = _client_ip(scope)
-        device_name = parse_qs(scope.get('query_string', b'').decode('utf-8', 'replace')).get('device', [''])[-1]
-        rejection = self._handshake_rejection(scope, headers, actor, device_name)
+        device_values = websocket.query_params.get('device', [])
+        device_name = device_values[0] if len(device_values) == 1 else ''
+        audit_device = _safe_audit_device(device_name)
+        rejection = self._handshake_rejection(scope, headers, actor, device_values)
         if rejection:
+            status_code, detail = rejection
             self._logger.warning(
                 'terminal_rejected actor=%s device=%s source=%s reason=%s',
                 actor or 'anonymous',
-                device_name or 'missing',
+                audit_device,
                 client_ip,
-                rejection,
+                detail,
             )
-            await send({'type': 'websocket.close', 'code': 1008, 'reason': rejection})
+            await websocket.deny(status_code, detail)
             return
 
         try:
@@ -216,108 +223,98 @@ class TerminalGateway:
             ssh = getattr(computer, 'ssh', None)
         except Exception:
             self._logger.exception('terminal_config_failed actor=%s source=%s', actor, client_ip)
-            await send({'type': 'websocket.close', 'code': 1011, 'reason': 'Terminal configuration is unavailable'})
+            await websocket.deny(503, 'Terminal configuration is unavailable')
             return
 
         if actor is None or not isinstance(ssh, SSHSettings) or not self.can_access(actor, ssh):
-            self._logger.warning('terminal_forbidden actor=%s device=%s source=%s', actor, device_name or 'missing', client_ip)
-            await send({'type': 'websocket.close', 'code': 1008, 'reason': 'Terminal access denied'})
+            self._logger.warning('terminal_forbidden actor=%s device=%s source=%s', actor, audit_device, client_ip)
+            await websocket.deny(404, 'Terminal target not found')
             return
-
-        first_event = await receive()
-        if first_event.get('type') != 'websocket.connect':
-            await send({'type': 'websocket.close', 'code': 1002, 'reason': 'Invalid WebSocket handshake'})
-            return
-        await send({'type': 'websocket.accept', 'subprotocol': TERMINAL_SUBPROTOCOL})
+        await websocket.accept(TERMINAL_SUBPROTOCOL)
 
         cookie_token = parse_cookie_header(headers.get('cookie')).get(self._csrf_cookie_name)
         try:
-            auth_message = await asyncio.wait_for(receive(), timeout=AUTH_TIMEOUT_SECONDS)
+            auth_message = await asyncio.wait_for(websocket.receive_json(), timeout=AUTH_TIMEOUT_SECONDS)
             columns, rows, password = self._validate_auth_message(auth_message, cookie_token, ssh)
         except TimeoutError:
-            await self._error_and_close(send, 'Terminal authorization timed out', 1008)
+            await self._error_and_close(websocket, 'Terminal authorization timed out', 1008)
+            return
+        except WebSocketDisconnect:
             return
         except TerminalProtocolError as error:
-            await self._error_and_close(send, str(error), 1008)
+            await self._error_and_close(websocket, str(error), 1008)
             return
 
         if not self._reserve(actor):
-            await self._error_and_close(send, 'Terminal session limit reached', 1013)
+            await self._error_and_close(websocket, 'Terminal session limit reached', 1013)
             return
 
         started = time.monotonic()
         outcome = 'failed'
-        self._logger.info('terminal_open actor=%s device=%s source=%s', actor, device_name, client_ip)
+        self._logger.info('terminal_open actor=%s device=%s source=%s', actor, audit_device, client_ip)
         try:
-            await self._run_ssh_session(ssh, columns, rows, password, receive, send)
+            await self._run_ssh_session(ssh, columns, rows, password, websocket)
             outcome = 'closed'
         except HostKeyVerificationError, paramiko.BadHostKeyException:
             outcome = 'host_key_rejected'
-            await self._error_and_close(send, 'SSH host identity verification failed', 1011)
+            await self._error_and_close(websocket, 'SSH host identity verification failed', 1011)
         except paramiko.AuthenticationException:
             outcome = 'authentication_failed'
-            await self._error_and_close(send, 'SSH authentication failed', 1011)
+            await self._error_and_close(websocket, 'SSH authentication failed', 1011)
         except TerminalProtocolError as error:
             outcome = 'protocol_rejected'
-            await self._error_and_close(send, str(error), 1008)
+            await self._error_and_close(websocket, str(error), 1008)
+        except WebSocketDisconnect:
+            outcome = 'client_disconnected'
         except TimeoutError:
             outcome = 'timed_out'
-            await self._error_and_close(send, 'SSH connection timed out', 1011)
+            await self._error_and_close(websocket, 'SSH connection timed out', 1011)
         except OSError, paramiko.SSHException:
             outcome = 'connection_failed'
-            await self._error_and_close(send, 'SSH connection failed', 1011)
+            await self._error_and_close(websocket, 'SSH connection failed', 1011)
         except Exception:
             outcome = 'unexpected_error'
-            self._logger.exception('terminal_unexpected actor=%s device=%s source=%s', actor, device_name, client_ip)
-            await self._error_and_close(send, 'Terminal session failed', 1011)
+            self._logger.exception('terminal_unexpected actor=%s device=%s source=%s', actor, audit_device, client_ip)
+            await self._error_and_close(websocket, 'Terminal session failed', 1011)
         finally:
             self._release(actor)
             duration = round(time.monotonic() - started, 1)
             self._logger.info(
                 'terminal_close actor=%s device=%s source=%s outcome=%s duration_seconds=%s',
                 actor,
-                device_name,
+                audit_device,
                 client_ip,
                 outcome,
                 duration,
             )
 
     def _handshake_rejection(
-        self, scope: Mapping[str, Any], headers: Mapping[str, str], actor: str | None, device_name: str
-    ) -> str | None:
+        self,
+        scope: Mapping[str, Any],
+        headers: Mapping[str, str],
+        actor: str | None,
+        device_values: list[str],
+    ) -> tuple[int, str] | None:
         if not self.enabled:
-            return 'Terminal access is disabled'
+            return 404, 'Not Found'
         if actor is None:
-            return 'Terminal authentication required'
-        host = headers.get('host', '')
-        if not host_is_allowed(host, allowed_hosts=self._allowed_hosts):
-            return 'Invalid request host'
-        origin = headers.get('origin', '')
-        parsed_origin = urlsplit(origin)
+            return 401, 'Terminal authentication required'
         scheme = str(scope.get('scheme', 'ws')).lower()
-        expected_origin_scheme = 'https' if scheme == 'wss' else 'http'
-        if (
-            parsed_origin.scheme.lower() != expected_origin_scheme
-            or parsed_origin.netloc.lower() != host.lower()
-            or parsed_origin.username is not None
-            or parsed_origin.path
-            or parsed_origin.query
-            or parsed_origin.fragment
-        ):
-            return 'Untrusted WebSocket origin'
         if scheme != 'wss' and not self._is_direct_loopback(scope, headers):
-            return 'Secure WebSocket transport required'
-        protocols = {item.strip() for item in headers.get('sec-websocket-protocol', '').split(',')}
+            return 403, 'Secure WebSocket transport required'
+        protocols = {str(item).strip() for item in scope.get('subprotocols', ())}
         if TERMINAL_SUBPROTOCOL not in protocols:
-            return 'Unsupported terminal protocol'
-        if not device_name or len(device_name) > MAX_DEVICE_NAME_LENGTH:
-            return 'Invalid terminal target'
+            return 400, 'Unsupported terminal protocol'
+        if len(device_values) != 1:
+            return 404, 'Terminal target not found'
+        device_name = device_values[0]
+        if not device_name or len(device_name) > MAX_DEVICE_NAME_LENGTH or not device_name.isprintable():
+            return 404, 'Terminal target not found'
         return None
 
-    def _validate_auth_message(
-        self, message: Mapping[str, Any], cookie_token: str | None, ssh: SSHSettings
-    ) -> tuple[int, int, str | None]:
-        payload = self._decode_client_message(message)
+    def _validate_auth_message(self, payload: Any, cookie_token: str | None, ssh: SSHSettings) -> tuple[int, int, str | None]:
+        if not isinstance(payload, dict):
+            raise TerminalProtocolError('Invalid terminal message')
         token = payload.get('csrf')
         if payload.get('type') != 'auth' or not isinstance(token, str) or not cookie_token:
             raise TerminalProtocolError('Terminal authorization failed')
@@ -339,21 +336,6 @@ class TerminalGateway:
             raise TerminalProtocolError('Unexpected SSH credential')
         return columns, rows, None
 
-    @staticmethod
-    def _decode_client_message(message: Mapping[str, Any]) -> dict[str, Any]:
-        if message.get('type') == 'websocket.disconnect':
-            raise TerminalProtocolError('Terminal disconnected')
-        text = message.get('text')
-        if not isinstance(text, str) or len(text.encode('utf-8')) > MAX_CLIENT_MESSAGE_BYTES:
-            raise TerminalProtocolError('Invalid terminal message')
-        try:
-            payload = json.loads(text)
-        except json.JSONDecodeError as error:
-            raise TerminalProtocolError('Invalid terminal message') from error
-        if not isinstance(payload, dict):
-            raise TerminalProtocolError('Invalid terminal message')
-        return payload
-
     def _reserve(self, actor: str) -> bool:
         # Read with get() so a rejected reservation cannot leave a zero entry behind.
         if self._active_total >= MAX_SESSIONS_TOTAL or self._active_by_user.get(actor, 0) >= MAX_SESSIONS_PER_USER:
@@ -369,7 +351,7 @@ class TerminalGateway:
             self._active_by_user.pop(actor, None)
 
     async def _run_ssh_session(
-        self, ssh: SSHSettings, columns: int, rows: int, password: str | None, receive: Any, send: Any
+        self, ssh: SSHSettings, columns: int, rows: int, password: str | None, websocket: TerminalTransport
     ) -> None:
         private_key: Path | None = None
         if ssh.authentication == 'key':
@@ -391,8 +373,14 @@ class TerminalGateway:
             columns,
             rows,
         )
-        await self._send_json(send, {'type': 'ready'})
-        await self._bridge(client, channel, receive, send)
+        try:
+            await websocket.send_json({'type': 'ready'})
+            await self._bridge(channel, websocket)
+        finally:
+            with suppress(Exception):
+                await asyncio.to_thread(channel.close)
+            with suppress(Exception):
+                await asyncio.to_thread(client.close)
 
     @staticmethod
     def _open_ssh_connection(
@@ -461,10 +449,10 @@ class TerminalGateway:
             raise TerminalProtocolError('SSH private key permissions must be 0600 or stricter')
         return resolved
 
-    async def _bridge(self, client: Any, channel: Any, receive: Any, send: Any) -> None:
+    async def _bridge(self, channel: Any, websocket: TerminalTransport) -> None:
         activity = _ActivityClock(time.monotonic())
-        output_task = asyncio.create_task(self._pump_output(channel, send, activity))
-        input_task = asyncio.create_task(self._pump_input(channel, receive, activity))
+        output_task = asyncio.create_task(self._pump_output(channel, websocket, activity))
+        input_task = asyncio.create_task(self._pump_input(channel, websocket, activity))
         tasks = {output_task, input_task}
         results: list[Any] = []
         try:
@@ -474,17 +462,13 @@ class TerminalGateway:
                 if not task.done():
                     task.cancel()
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            with suppress(Exception):
-                await asyncio.to_thread(channel.close)
-            with suppress(Exception):
-                await asyncio.to_thread(client.close)
         for result in results:
             if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
                 raise result
         with suppress(Exception):
-            await send({'type': 'websocket.close', 'code': 1000, 'reason': 'Terminal session ended'})
+            await websocket.close(1000, 'Terminal session ended')
 
-    async def _pump_output(self, channel: Any, send: Any, activity: _ActivityClock) -> None:
+    async def _pump_output(self, channel: Any, websocket: TerminalTransport, activity: _ActivityClock) -> None:
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         while True:
             try:
@@ -497,15 +481,15 @@ class TerminalGateway:
             if not data:
                 remaining = decoder.decode(b'', final=True)
                 if remaining:
-                    await self._send_json(send, {'type': 'output', 'data': remaining})
-                await self._send_json(send, {'type': 'exit'})
+                    await websocket.send_json({'type': 'output', 'data': remaining})
+                await websocket.send_json({'type': 'exit'})
                 return
             activity.last = time.monotonic()
             output = decoder.decode(data)
             if output:
-                await self._send_json(send, {'type': 'output', 'data': output})
+                await websocket.send_json({'type': 'output', 'data': output})
 
-    async def _pump_input(self, channel: Any, receive: Any, activity: _ActivityClock) -> None:
+    async def _pump_input(self, channel: Any, websocket: TerminalTransport, activity: _ActivityClock) -> None:
         started = time.monotonic()
         message_times: deque[float] = deque()
         while True:
@@ -515,12 +499,11 @@ class TerminalGateway:
             if now - activity.last >= IDLE_TIMEOUT_SECONDS:
                 raise TerminalProtocolError('Terminal session closed after inactivity')
             try:
-                message = await asyncio.wait_for(receive(), timeout=CLIENT_MESSAGE_POLL_SECONDS)
+                payload = await asyncio.wait_for(websocket.receive_json(), timeout=CLIENT_MESSAGE_POLL_SECONDS)
             except TimeoutError:
                 continue
-            if message.get('type') == 'websocket.disconnect':
-                return
-            payload = self._decode_client_message(message)
+            if not isinstance(payload, dict):
+                raise TerminalProtocolError('Invalid terminal message')
             now = time.monotonic()
             message_times.append(now)
             while message_times and message_times[0] < now - MESSAGE_RATE_WINDOW_SECONDS:
@@ -543,12 +526,21 @@ class TerminalGateway:
             else:
                 raise TerminalProtocolError('Unsupported terminal message')
 
-    @staticmethod
-    async def _send_json(send: Any, payload: Mapping[str, Any]) -> None:
-        await send({'type': 'websocket.send', 'text': json.dumps(payload, separators=(',', ':'))})
+    async def _error_and_close(self, websocket: TerminalTransport, message: str, code: int) -> None:
+        with suppress(Exception):
+            await websocket.send_json({'type': 'error', 'message': message})
+        with suppress(Exception):
+            await websocket.close(code, _bounded_close_reason(message))
 
-    async def _error_and_close(self, send: Any, message: str, code: int) -> None:
-        with suppress(Exception):
-            await self._send_json(send, {'type': 'error', 'message': message})
-        with suppress(Exception):
-            await send({'type': 'websocket.close', 'code': code, 'reason': message[:CLOSE_REASON_MAX_LENGTH]})
+
+def _bounded_close_reason(message: str) -> str:
+    """Return a UTF-8-safe close reason below the RFC 6455 control-frame limit."""
+    encoded = message.encode('utf-8')[:CLOSE_REASON_MAX_LENGTH]
+    return encoded.decode('utf-8', 'ignore')
+
+
+def _safe_audit_device(device_name: str) -> str:
+    """Keep untrusted terminal targets from injecting controls into audit logs."""
+    if device_name and len(device_name) <= MAX_DEVICE_NAME_LENGTH and device_name.isprintable():
+        return device_name
+    return 'invalid'

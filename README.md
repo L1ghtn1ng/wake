@@ -168,8 +168,14 @@ Production-facing runtime and security settings are driven by environment variab
   Defaults to `5`. Because `/status` is unauthenticated, this floor stops a caller from
   looping the parameter to amplify ICMP or TCP probes at your network. Set it to `0` to
   disable the floor.
+- `FLASGO_METRICS_TOKEN`
+  Required bearer token for Flasgo's always-enabled `/metrics` endpoint. It must
+  contain at least 32 bearer-safe ASCII characters with no whitespace (letters,
+  digits, `-._~+/`, and optional trailing `=`). Store it in the service's
+  protected environment file and generate a high-entropy value rather than
+  reusing a login password.
 - `WAKE_TERMINAL_ENABLED`
-  Set to `1` to register the authenticated browser SSH gateway. It is off by
+  Set to `1` to enable the authenticated browser SSH gateway. It is off by
   default and fails startup unless `WAKE_TERMINAL_USERS` is also set.
 - `WAKE_TERMINAL_USERS`
   Required comma-separated allowlist of authenticated proxy identities.
@@ -192,10 +198,13 @@ any client-supplied identity header, and sets the configured identity header
 itself. A direct request from an address outside `WAKE_TRUST_PROXY_IPS` is denied
 even if it spoofs that header.
 
-The browser uses the standard HTML5 WebSocket API to reach Wake's existing ASGI
-WebSocket endpoint. Wake bridges that socket to a Paramiko SSH channel in bounded
-worker threads. No separate terminal server, Node.js process, or JavaScript build
-service is required.
+The browser uses the standard HTML5 WebSocket API to reach a native Flasgo 0.6
+`@app.websocket` route. Flasgo owns routing, the ASGI connection lifecycle,
+same-origin enforcement, bounded JSON messages, subprotocol selection, request
+IDs, framework rate limiting, and test-client support. Wake adds the terminal's
+proxy identity, CSRF proof, target authorization, tighter burst/session limits,
+and Paramiko bridge in bounded worker threads. No separate terminal server,
+Node.js process, or JavaScript build service is required.
 
 Use a dedicated unprivileged remote account with no `sudo` access. For key-mode
 devices, restrict the Wake key in `authorized_keys` by the Wake server's source
@@ -218,16 +227,20 @@ WAKE_TERMINAL_ENABLED=1
 WAKE_TERMINAL_USERS=jay
 WAKE_TERMINAL_IDENTITY_HEADER=X-Wake-User
 WAKE_SSH_KEY_PASSPHRASE=use-a-secret-environment-file
+FLASGO_METRICS_TOKEN=replace-with-at-least-32-random-characters
 ```
 
 The terminal accepts only `wss://` unless the explicit loopback-only development
-mode below is enabled.
-It validates the exact WebSocket Origin, requires
-a first-message CSRF proof, allows at most two sessions per identity and ten per
-worker, limits message sizes and rates, closes idle sessions after ten minutes,
-and forces proxy re-authentication after thirty minutes. Audit logs contain only
-identity, device name, proxy source, result, and duration—never terminal input,
-output, keys, cookies, passphrases, or entered SSH passwords.
+mode below is enabled. Flasgo rejects missing, duplicate, malformed, or
+cross-origin `Origin` headers and invalid `Host` headers before Wake's terminal
+handler runs. The handler then requires the `wake-terminal-v1` subprotocol and a
+first-message CSRF proof, allows at most two sessions per identity and ten per
+worker, limits each message to 16 KiB, enforces both a framework-wide 1,200-message
+per-minute ceiling and a tighter 200-message per-ten-second burst ceiling, closes
+idle sessions after ten minutes, and forces proxy re-authentication after thirty
+minutes. Audit logs contain only identity, device name, proxy source, result, and
+duration—never terminal input, output, keys, cookies, passphrases, or entered SSH
+passwords.
 
 For a short-lived direct Uvicorn test on the same computer, opt into loopback-only
 development mode:
@@ -236,19 +249,27 @@ development mode:
 WAKE_TERMINAL_ENABLED=1
 WAKE_TERMINAL_USERS=jay
 WAKE_TERMINAL_LOCAL_DEVELOPMENT=1
+FLASGO_METRICS_TOKEN=replace-with-at-least-32-random-characters
 ```
 
 Then run Uvicorn bound specifically to loopback and open
 `http://127.0.0.1:8000` on that same computer:
 
 ```bash
-uvicorn wake:app --reload --env-file ./enviroment --host 127.0.0.1 --port 8000
+uv run uvicorn wake:app --reload --env-file ./enviroment --host 127.0.0.1 --port 8000 --no-proxy-headers
 ```
 
 Never use local development mode when binding Uvicorn to a non-loopback address
 or placing it behind a reverse proxy. Disable it for every deployed instance.
 
 ## Running
+
+Set the required metrics bearer token. For local development, a new value can be
+generated with:
+
+```bash
+export FLASGO_METRICS_TOKEN="$(openssl rand -hex 32)"
+```
 
 Start the built-in Flasgo development server:
 
@@ -282,7 +303,39 @@ Routes provided by the app:
   cached result with a normal `200`. `refresh=*` refreshes every device under the same floor.
 - `/terminal?device=<name>` renders the isolated, authenticated SSH terminal page
 - `/ws/terminal?device=<name>` carries its authenticated WebSocket protocol
+- `/metrics` exposes bearer-authenticated per-process Prometheus metrics
 - `/static/<path>` is served by Flasgo's built-in static file support
+
+Flasgo 0.6 can expose OpenAPI and Swagger UI for HTTP APIs. Wake leaves those
+optional endpoints disabled: its public contract is the UI and the routes listed
+above, while OpenAPI does not describe the stateful terminal WebSocket protocol.
+The WebSocket handshake, first auth message, subsequent message types, limits,
+close behavior, and deployment requirements are documented in this section and
+in [SECURITY.md](SECURITY.md).
+
+### Prometheus metrics
+
+Wake installs Flasgo's pinned `metrics` extra and enables its native Prometheus
+registry. Every scrape must send the token from `FLASGO_METRICS_TOKEN`:
+
+```bash
+curl --fail --show-error \
+  --header "Authorization: Bearer ${FLASGO_METRICS_TOKEN}" \
+  http://127.0.0.1:8080/metrics
+```
+
+Configure Prometheus or another compatible collector to send the same bearer
+token. Prefer scraping the loopback or private backend address; do not publish
+`/metrics` directly to the internet. Keep the token out of URLs, command-line
+arguments, source control, dashboards, and logs, and restrict its environment or
+credentials file to the Wake and monitoring service accounts.
+
+Flasgo exports request counts, active requests, request durations, WebSocket
+connection counts/outcomes, active WebSockets, WebSocket durations, background
+task outcomes, and lifespan outcomes. HTTP series use matched route templates
+rather than attacker-controlled raw paths, and `/metrics` does not instrument
+itself. Registries and counters are per process, so a multi-worker or multi-host
+deployment must scrape and aggregate every instance.
 
 ## Deployment
 
@@ -364,6 +417,9 @@ journalctl -u wake.service -f
 ```
 
 If `uv` is installed in a non-standard location, replace `/usr/bin/env uv` in `ExecStart` with the full path from `which uv`.
+Put `FLASGO_METRICS_TOKEN` in `/etc/wake/wake.env`, make the file readable only
+by the service account (for example mode `0600`), and restart Wake after rotating
+the token.
 
 ### Production identity header
 
@@ -379,6 +435,7 @@ WAKE_TERMINAL_ENABLED=1
 WAKE_TERMINAL_USERS=jay
 WAKE_TERMINAL_IDENTITY_HEADER=X-Wake-User
 WAKE_TERMINAL_LOCAL_DEVELOPMENT=0
+FLASGO_METRICS_TOKEN=replace-with-at-least-32-random-characters
 ```
 
 ```yaml
@@ -545,6 +602,10 @@ Those tests verify:
 - each device is rendered with its own wake control
 - terminal targets and file paths are validated and never selected by the browser
 - terminal access requires a trusted proxy identity, exact Origin, and CSRF proof
+- the terminal is registered through Flasgo's native WebSocket router and exercised through its WebSocket test client
+- Flasgo rejects invalid Host, missing Origin, and cross-origin WebSocket handshakes before the terminal handler
+- Flasgo enforces the 16 KiB message cap and one-minute rate ceiling while Wake enforces its tighter burst limit
+- `/metrics` requires the configured bearer token, exposes bounded route-template labels, and does not count its own scrapes
 - SSH host keys are pinned and exactly one configured authentication method is offered, without agent, local-key, or cross-method fallback
 - terminal message, rate, connection-count, idle, and maximum-duration limits fail closed
 
