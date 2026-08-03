@@ -599,9 +599,16 @@
     if (keys[event.key]) return keys[event.key];
     if (event.ctrlKey && !event.altKey && !event.metaKey) {
       if (event.shiftKey && ['c', 'v'].includes(event.key.toLowerCase())) return null;
+      // Named keys ('Shift', 'CapsLock', 'Dead', ...) are never C0 bytes; without
+      // this guard their names would lexicographically match the A-Z range below.
+      if (event.key.length !== 1) return null;
+      if (event.key <= '\x1f' || event.key === '\x7f') return event.key;
       const upper = event.key.toUpperCase();
       if (upper >= 'A' && upper <= 'Z') return String.fromCharCode(upper.charCodeAt(0) - 64);
-      const controls = { '@': '\x00', '[': '\x1b', '\\': '\x1c', ']': '\x1d', '^': '\x1e', _: '\x1f', '?': '\x7f' };
+      const controls = {
+        ' ': '\x00', 2: '\x00', 3: '\x1b', 4: '\x1c', 5: '\x1d', 6: '\x1e', 7: '\x1f', 8: '\x7f', '/': '\x1f',
+        '@': '\x00', '[': '\x1b', '\\': '\x1c', ']': '\x1d', '^': '\x1e', _: '\x1f', '?': '\x7f',
+      };
       return controls[event.key] ?? null;
     }
     if (event.altKey && !event.ctrlKey && !event.metaKey && event.key.length === 1) return `\x1b${event.key}`;

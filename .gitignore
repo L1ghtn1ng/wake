@@ -163,3 +163,4 @@ ENV/
 .pyre
 .mypy_cache
 computers.yaml
+.opencode/

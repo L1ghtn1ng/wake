@@ -710,6 +710,12 @@ def test_terminal_browser_client_keeps_control_key_local_for_remote_shortcuts() 
     assert "input.addEventListener('keyup'" in source
     assert "input.addEventListener('beforeinput'" in source
     assert 'return String.fromCharCode(upper.charCodeAt(0) - 64)' in source
+    # Named keys like 'Shift' must never match the A-Z control range (they used
+    # to send a spurious ^S/^C/^D while Ctrl was held).
+    assert 'if (event.key.length !== 1) return null;' in source
+    assert r"if (event.key <= '\x1f' || event.key === '\x7f') return event.key;" in source
+    assert r"' ': '\x00'" in source
+    assert r"'/': '\x1f'" in source
 
 
 def test_header_and_cookie_helpers_have_one_shared_implementation() -> None:
