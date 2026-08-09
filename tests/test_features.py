@@ -436,6 +436,39 @@ def test_status_details_and_forced_refresh_remain_backward_compatible(monkeypatc
     assert force_values == [set(), {'desktop'}]
 
 
+def test_status_uses_typed_query_binding_and_documents_it(monkeypatch) -> None:
+    force_values: list[set[str]] = []
+
+    async def fake_statuses(*, force: set[str] | None = None) -> dict[str, StatusResult]:
+        force_values.append(force or set())
+        return {}
+
+    monkeypatch.setattr(Computers, 'config', staticmethod(lambda: {}))
+    monkeypatch.setattr(Computers, 'throttled_refresh', staticmethod(lambda requested, _configured: requested))
+    monkeypatch.setattr(Computers, 'get_all_statuses', staticmethod(fake_statuses))
+    client = app.test_client()
+
+    repeated_refresh = client.get('/status?details=false&refresh=desktop&refresh=laptop')
+    invalid_boolean = client.get('/status?details=maybe')
+    duplicate_boolean = client.get('/status?details=1&details=0')
+
+    assert repeated_refresh.status_code == 200
+    assert force_values == [{'desktop', 'laptop'}]
+    assert invalid_boolean.status_code == 422
+    assert 'maybe' not in invalid_boolean.text
+    assert duplicate_boolean.status_code == 422
+    assert app.settings.ENABLE_DOCS is False
+    assert client.get('/docs').status_code == 404
+
+    spec = app.openapi_spec()
+    assert spec['openapi'] == '3.2.0'
+    parameters = spec['paths']['/status']['get']['parameters']
+    assert [(parameter['name'], parameter['schema']) for parameter in parameters] == [
+        ('details', {'type': 'boolean'}),
+        ('refresh', {'anyOf': [{'type': 'array', 'items': {'type': 'string'}}, {'type': 'null'}]}),
+    ]
+
+
 def test_status_etag_is_a_quoted_entity_tag_that_revalidates(monkeypatch) -> None:
     monkeypatch.setattr(wake, '_status_refresh_time', {})
     client = app.test_client()
@@ -488,9 +521,17 @@ def test_successful_responses_stream_without_being_buffered() -> None:
 def test_manifest_is_installable_and_all_icons_are_served() -> None:
     client = app.test_client()
     response = client.get('/static/site.webmanifest')
+    head = client.head('/static/site.webmanifest')
     manifest = json.loads(response.text)
 
     assert response.status_code == 200
+    assert 'set-cookie' not in response.headers
+    assert head.status_code == 200
+    assert head.body == b''
+    assert head.headers['content-length'] == str(len(response.body))
+    assert head.headers['etag'] == response.headers['etag']
+    assert head.headers['last-modified'] == response.headers['last-modified']
+    assert 'set-cookie' not in head.headers
     assert manifest['start_url'] == '/'
     assert manifest['scope'] == '/'
     assert manifest['display'] == 'standalone'

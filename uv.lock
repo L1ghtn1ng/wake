@@ -201,16 +201,16 @@ wheels = [
 
 [[package]]
 name = "flasgo"
-version = "0.6.0"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/ff/05476ac4959599814564aee95311c9bde673e16bec637b6678bc7f3d1874/flasgo-0.6.0.tar.gz", hash = "sha256:357485523105a53971d76b48f2e7891ed3cf249db25094f0875715d577a5424a", size = 109502, upload-time = "2026-07-31T01:08:21.672Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/f6/8ae1d55a265fafb2e40cb85fe62cbd3c4cbae71f699a20a9714d0940670c/flasgo-0.7.0.tar.gz", hash = "sha256:4921a05b23734c1d252d8ceaf0ce0e8620430eecf609b5754ed2c8b3505db04b", size = 186520, upload-time = "2026-08-08T21:31:54.403Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/77/898dbe0948dd69bbcf91798b6538ef36cb6851ba1c5c53d960af5e371a2b/flasgo-0.6.0-py3-none-any.whl", hash = "sha256:4ebd14fe816cb57db2a93c510f17fb4344f148030f36d240e49f338fddde5202", size = 67600, upload-time = "2026-07-31T01:08:20.459Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/ac/f44a291c0722d96d9f00d1ef5fc38432fe98aedb7bc91da13c72dc96dc02/flasgo-0.7.0-py3-none-any.whl", hash = "sha256:6d525d721fff793010d7ac7f1ce359b81cabb63ca596cc4ca9761b40f5fa14f7", size = 95494, upload-time = "2026-08-08T21:31:53.013Z" },
 ]
 
 [package.optional-dependencies]
@@ -552,7 +552,7 @@ dependencies = [
     { name = "wakeonlan" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
@@ -561,15 +561,18 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flasgo", extras = ["metrics"], specifier = "==0.6.0" },
+    { name = "flasgo", extras = ["metrics"], specifier = "==0.7.0" },
     { name = "paramiko", specifier = "==5.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = "==9.1.1" },
     { name = "pyyaml", specifier = "==6.0.3" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.15.21" },
-    { name = "types-pyyaml", marker = "extra == 'dev'", specifier = "==6.0.12.20250915" },
     { name = "wakeonlan", specifier = "==4.0.0" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = "==9.1.1" },
+    { name = "ruff", specifier = "==0.15.21" },
+    { name = "types-pyyaml", specifier = "==6.0.12.20250915" },
+]
 
 [[package]]
 name = "wakeonlan"

@@ -16,7 +16,7 @@ The application then applies all of these checks before opening SSH:
 
 1. terminal feature enabled and trusted proxy peer;
 2. globally allowlisted proxy identity;
-3. Flasgo 0.6 allowed-Host and exact same-origin `wss://` handshake checks,
+3. Flasgo 0.7 allowed-Host and exact same-origin `wss://` handshake checks,
    including rejection of missing or duplicate Origin headers;
 4. supported application subprotocol selected through Flasgo's WebSocket API;
 5. first-message token matching the CSRF cookie;
@@ -45,9 +45,9 @@ WebSocket controls follow the official
 | Category | Controls in the SSH terminal |
 | --- | --- |
 | A01 Broken Access Control | Deny-by-default feature gate, trusted-proxy identity, global and per-device allowlists, server-side target lookup, Flasgo-enforced exact Origin/Host checks before the route handler, and no arbitrary destination input. |
-| A02 Security Misconfiguration | Startup rejects an enabled terminal without an identity allowlist; invalid header names and unknown YAML keys fail closed; production requires WSS; Flasgo rejects missing Origin headers by configuration; a single app-wide CSP covers every route, so no per-route override can silently diverge from the reviewed policy. |
+| A02 Security Misconfiguration | Startup rejects a missing or short signing key and an enabled terminal without an identity allowlist; invalid header names and unknown YAML keys fail closed; production requires WSS; Flasgo rejects missing Origin headers by configuration; a single app-wide CSP covers every route, so no per-route override can silently diverge from the reviewed policy. |
 | A03 Software Supply Chain Failures | Paramiko and its Python dependencies are exact-pinned in `uv.lock`; Dependabot covers the uv/PyPI dependency graph. The browser renderer has no third-party JavaScript dependencies, package manager, generated bundle, or runtime code download. |
-| A04 Cryptographic Failures | TLS/WSS protects browser traffic, including an entered password; SSHv2 protects the backend channel; host keys are mandatory and pinned; only the configured authentication source is offered. CBC/3DES ciphers and SHA-1/MD5 MAC fallbacks are explicitly disabled. |
+| A04 Cryptographic Failures | TLS/WSS protects browser traffic, including an entered password; Flasgo signs session-bound CSRF tokens with a stable deployment key; SSHv2 protects the backend channel; host keys are mandatory and pinned; only the configured authentication source is offered. CBC/3DES ciphers and SHA-1/MD5 MAC fallbacks are explicitly disabled. |
 | A05 Injection | Browser input is written as bytes to an established Paramiko SSH channel, never interpolated into a local command; target fields are typed and allowlisted. Jinja autoescaping and the local renderer use DOM text nodes rather than `innerHTML`, do not evaluate code, and discard OSC/DCS payloads such as hyperlinks and clipboard controls. |
 | A06 Insecure Design | The high-privilege terminal has a separate minimal page served under the shared app-wide CSP; credentials never reach the browser; Flasgo owns the WebSocket lifecycle and one-minute message ceiling while Wake adds bounded duration, idle timeout, connection caps, a tighter burst limit, backpressure, and generic failures. The shared policy keeps every route non-framable with `frame-ancestors 'none'` and disables plugins with `object-src 'none'`. The terminal inherits broader homepage source, style, base-URI, and same-origin form permissions, but its template loads no third-party code and submits no form. |
 | A07 Authentication Failures | The authenticating proxy establishes identity; Wake accepts it only from configured proxy IPs and an explicit identity allowlist; each device explicitly selects key or password authentication; passwords are bounded and sent once; a connection lasts at most 30 minutes before proxy authentication is required again. |
@@ -59,11 +59,11 @@ WebSocket controls follow the official
 
 Flasgo metrics are always enabled at `/metrics`, and Wake fails startup unless
 `FLASGO_METRICS_TOKEN` contains at least 32 bearer-safe ASCII characters without
-whitespace. Wake validates that syntax before constructing Flasgo so token
-parsing and constant-time comparison cannot reinterpret or reject the configured
-value at request time. The endpoint accepts only `GET` and `HEAD`, returns `401`
-with a Bearer challenge on failed authentication, and records the failure as a
-security event. The metrics endpoint does not count its own scrapes.
+whitespace. Flasgo 0.7 validates that syntax while constructing the application
+and fails closed with `401` for malformed or non-ASCII request credentials. The
+endpoint accepts only `GET` and `HEAD`, returns a Bearer challenge on failed
+authentication, and records the failure as a security event. The metrics
+endpoint does not count its own scrapes.
 
 Treat the token and the exported operational data as sensitive. Scrape the
 loopback or private backend where possible, keep the token in a service-owned
@@ -73,6 +73,17 @@ by labeling HTTP requests with matched route templates instead of raw paths; Wak
 does not add device names, user identities, network addresses, terminal content,
 or credentials as metric labels. Metrics are per process, so monitoring must
 scrape every worker while enforcing aggregate alerting and retention controls.
+
+## Session and CSRF signing boundary
+
+Wake requires `FLASGO_SECRET_KEY` to contain at least 32 characters before it
+constructs the application. Flasgo 0.7 uses that stable value to HMAC-sign its
+session-bound double-submit CSRF tokens. Matching attacker-fixed or legacy
+unsigned cookie/header values are rejected. Every worker must receive the same
+secret; rotating it invalidates existing session and CSRF cookies and requires
+users to reload the page. Store the key only in a service-owned environment or
+credentials file with restrictive permissions, and do not reuse the metrics
+token, an SSH credential, or a login password.
 
 ## Browser renderer isolation
 

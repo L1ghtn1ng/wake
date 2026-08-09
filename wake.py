@@ -15,11 +15,11 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from ipaddress import ip_address
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar
 from urllib.parse import parse_qs, urlsplit
 
 import yaml
-from flasgo import Flasgo, Request, Response, Settings, WebSocket, redirect
+from flasgo import Flasgo, Query, Request, Response, Settings, WebSocket, redirect
 from wakeonlan import create_magic_packet
 from wakeonlan import wake as send_magic_packet
 
@@ -77,12 +77,12 @@ def parse_bool_env(name: str, *, default: bool = False) -> bool:
     raise ValueError(f'{name} must be one of: 1, 0, true, false, yes, no, on, off')
 
 
-def metrics_bearer_token_from_env() -> str:
-    """Load a bearer-safe metrics token without silently normalizing it."""
-    token = os.getenv('FLASGO_METRICS_TOKEN', '')
-    if len(token) < 32 or re.fullmatch(r'[A-Za-z0-9._~+/-]+=*', token) is None:
-        raise ValueError('FLASGO_METRICS_TOKEN must contain at least 32 bearer-safe ASCII characters without whitespace')
-    return token
+def flasgo_secret_key_from_env() -> str:
+    """Load the stable key used to sign Flasgo sessions and CSRF tokens."""
+    secret_key = os.getenv('FLASGO_SECRET_KEY', '')
+    if len(secret_key) < 32:
+        raise ValueError('FLASGO_SECRET_KEY must contain at least 32 characters')
+    return secret_key
 
 
 # Wake only needs small form posts (device name + CSRF). Cap buffered bodies to limit memory use.
@@ -516,12 +516,14 @@ TERMINAL_LOCAL_DEVELOPMENT = parse_bool_env('WAKE_TERMINAL_LOCAL_DEVELOPMENT')
 base_app = Flasgo(
     settings={
         'DEBUG': False,
+        'SECRET_KEY': flasgo_secret_key_from_env(),
         'ALLOWED_HOSTS': parse_csv_env('WAKE_ALLOWED_HOSTS') or {'127.0.0.1', 'localhost'},
         'CSRF_COOKIE_SECURE': not TERMINAL_LOCAL_DEVELOPMENT,
         'CSRF_TRUSTED_ORIGINS': parse_csv_env('WAKE_CSRF_TRUSTED_ORIGINS'),
         'METRICS_ENABLED': True,
         'METRICS_PATH': '/metrics',
-        'METRICS_BEARER_TOKEN': metrics_bearer_token_from_env(),
+        # Flasgo validates the configured grammar and rejects malformed request credentials.
+        'METRICS_BEARER_TOKEN': os.getenv('FLASGO_METRICS_TOKEN'),
         'SECURITY_HEADERS': SECURITY_HEADERS,
         # Flasgo owns the WebSocket handshake and enforces the same bounds as Wake's
         # terminal protocol. Wake retains the tighter ten-second burst limit below.
@@ -1162,17 +1164,20 @@ async def send_mac(request: Request) -> Response:
 
 
 @app.get('/status')
-async def get_status(request: Request) -> Response:
+async def get_status(
+    request: Request,
+    details: Annotated[bool, Query()] = False,
+    refresh: Annotated[list[str] | None, Query()] = None,
+) -> Response:
     """API endpoint for computer statuses with ETag caching"""
-    force = set(request.query_params.get('refresh', []))
-    detailed = request.query_params.get('details', ['0'])[-1] == '1'
+    force = set(refresh or ())
     try:
         statuses = await Computers.get_all_statuses(force=Computers.throttled_refresh(force, Computers.config()))
     except ConfigurationError as error:
         return Response.json({'error': configuration_error_summary(error)}, status_code=503)
 
     status_data: dict[str, Any]
-    if detailed:
+    if details:
         status_data = {name: status.json() for name, status in statuses.items()}
     else:
         status_data = {name: status.state for name, status in statuses.items()}

@@ -27,7 +27,7 @@ uv sync
 Install development dependencies, including `pytest`, `ruff`, and PyYAML types:
 
 ```bash
-uv sync --extra dev
+uv sync --group dev
 ```
 
 ## Configuration
@@ -168,6 +168,12 @@ Production-facing runtime and security settings are driven by environment variab
   Defaults to `5`. Because `/status` is unauthenticated, this floor stops a caller from
   looping the parameter to amplify ICMP or TCP probes at your network. Set it to `0` to
   disable the floor.
+- `FLASGO_SECRET_KEY`
+  Required stable signing key for Flasgo's sessions and HMAC-signed CSRF tokens.
+  It must contain at least 32 characters. Generate a high-entropy value, store it
+  in the protected service environment, and share the same value across every
+  Wake worker. Rotating it invalidates existing session and CSRF cookies, so
+  users must reload the page after a rotation.
 - `FLASGO_METRICS_TOKEN`
   Required bearer token for Flasgo's always-enabled `/metrics` endpoint. It must
   contain at least 32 bearer-safe ASCII characters with no whitespace (letters,
@@ -198,7 +204,7 @@ any client-supplied identity header, and sets the configured identity header
 itself. A direct request from an address outside `WAKE_TRUST_PROXY_IPS` is denied
 even if it spoofs that header.
 
-The browser uses the standard HTML5 WebSocket API to reach a native Flasgo 0.6
+The browser uses the standard HTML5 WebSocket API to reach a native Flasgo 0.7
 `@app.websocket` route. Flasgo owns routing, the ASGI connection lifecycle,
 same-origin enforcement, bounded JSON messages, subprotocol selection, request
 IDs, framework rate limiting, and test-client support. Wake adds the terminal's
@@ -227,6 +233,7 @@ WAKE_TERMINAL_ENABLED=1
 WAKE_TERMINAL_USERS=jay
 WAKE_TERMINAL_IDENTITY_HEADER=X-Wake-User
 WAKE_SSH_KEY_PASSPHRASE=use-a-secret-environment-file
+FLASGO_SECRET_KEY=replace-with-at-least-32-random-characters
 FLASGO_METRICS_TOKEN=replace-with-at-least-32-random-characters
 ```
 
@@ -249,6 +256,7 @@ development mode:
 WAKE_TERMINAL_ENABLED=1
 WAKE_TERMINAL_USERS=jay
 WAKE_TERMINAL_LOCAL_DEVELOPMENT=1
+FLASGO_SECRET_KEY=replace-with-at-least-32-random-characters
 FLASGO_METRICS_TOKEN=replace-with-at-least-32-random-characters
 ```
 
@@ -264,12 +272,16 @@ or placing it behind a reverse proxy. Disable it for every deployed instance.
 
 ## Running
 
-Set the required metrics bearer token. For local development, a new value can be
-generated with:
+Set the required signing key and metrics bearer token. For local development,
+new values can be generated with:
 
 ```bash
+export FLASGO_SECRET_KEY="$(openssl rand -hex 32)"
 export FLASGO_METRICS_TOKEN="$(openssl rand -hex 32)"
 ```
+
+Keep `FLASGO_SECRET_KEY` stable in production. All workers must use the same
+value so a signed CSRF token issued by one worker is accepted by another.
 
 Start the built-in Flasgo development server:
 
@@ -282,7 +294,10 @@ By default the app listens on `127.0.0.1:8080`. Set `WAKE_BIND_HOST` or
 loopback or a private service network in production so clients cannot bypass the
 authenticating reverse proxy.
 
-The wake action uses Flasgo's CSRF protection. The page JavaScript reads the CSRF cookie set on `GET /` and sends it back in the `X-CSRF-Token` header on `POST /`.
+The wake action uses Flasgo's HMAC-signed, session-bound CSRF protection. The
+page JavaScript reads the CSRF cookie set on `GET /` and sends it back in the
+`X-CSRF-Token` header on `POST /`. Matching attacker-fixed or legacy unsigned
+cookie/header values are rejected.
 
 Each device has its own wake control. After sending the configured packet or
 packets, the page bypasses that device's cached status and checks once per second
@@ -300,13 +315,16 @@ Routes provided by the app:
 - `/status?details=1` adds check time, latency, last-online time, and probe errors
 - `/status?details=1&refresh=<name>` bypasses the selected device's status cache, subject to
   the `WAKE_STATUS_REFRESH_MIN_INTERVAL` floor per device; a throttled device returns its
-  cached result with a normal `200`. `refresh=*` refreshes every device under the same floor.
+  cached result with a normal `200`. Repeat `refresh=<name>` to refresh multiple
+  devices, or use `refresh=*` for every device under the same floor. Flasgo's
+  typed query binding returns a bounded `422` response for invalid boolean or
+  duplicated `details` values.
 - `/terminal?device=<name>` renders the isolated, authenticated SSH terminal page
 - `/ws/terminal?device=<name>` carries its authenticated WebSocket protocol
 - `/metrics` exposes bearer-authenticated per-process Prometheus metrics
 - `/static/<path>` is served by Flasgo's built-in static file support
 
-Flasgo 0.6 can expose OpenAPI and Swagger UI for HTTP APIs. Wake leaves those
+Flasgo 0.7 can expose OpenAPI 3.2 and Swagger UI for HTTP APIs. Wake leaves those
 optional endpoints disabled: its public contract is the UI and the routes listed
 above, while OpenAPI does not describe the stateful terminal WebSocket protocol.
 The WebSocket handshake, first auth message, subsequent message types, limits,
@@ -319,9 +337,7 @@ Wake installs Flasgo's pinned `metrics` extra and enables its native Prometheus
 registry. Every scrape must send the token from `FLASGO_METRICS_TOKEN`:
 
 ```bash
-curl --fail --show-error \
-  --header "Authorization: Bearer ${FLASGO_METRICS_TOKEN}" \
-  http://127.0.0.1:8080/metrics
+curl --fail --show-error --header "Authorization: Bearer ${FLASGO_METRICS_TOKEN}" http://127.0.0.1:8080/metrics
 ```
 
 Configure Prometheus or another compatible collector to send the same bearer
@@ -351,7 +367,11 @@ from wake import app
 application = app
 ```
 
-The application uses Flasgo's built-in static file support for `static/`, so an external static-file mapping is optional rather than required.
+The application uses Flasgo's built-in static file support for `static/`, so an
+external static-file mapping is optional rather than required. Flasgo 0.7 streams
+`GET` bodies in bounded chunks outside the event loop, serves `HEAD` without
+opening or reading the file, and does not attach session or CSRF cookies to
+publicly cacheable static responses.
 
 ### Running with Uvicorn behind a reverse proxy
 
@@ -417,9 +437,10 @@ journalctl -u wake.service -f
 ```
 
 If `uv` is installed in a non-standard location, replace `/usr/bin/env uv` in `ExecStart` with the full path from `which uv`.
-Put `FLASGO_METRICS_TOKEN` in `/etc/wake/wake.env`, make the file readable only
-by the service account (for example mode `0600`), and restart Wake after rotating
-the token.
+Put `FLASGO_SECRET_KEY` and `FLASGO_METRICS_TOKEN` in `/etc/wake/wake.env`, make
+the file readable only by the service account (for example mode `0600`), and
+restart Wake after rotating either value. Keep the signing key identical across
+workers; after rotating it, users must reload Wake to receive new signed cookies.
 
 ### Production identity header
 
@@ -435,6 +456,7 @@ WAKE_TERMINAL_ENABLED=1
 WAKE_TERMINAL_USERS=jay
 WAKE_TERMINAL_IDENTITY_HEADER=X-Wake-User
 WAKE_TERMINAL_LOCAL_DEVELOPMENT=0
+FLASGO_SECRET_KEY=replace-with-at-least-32-random-characters
 FLASGO_METRICS_TOKEN=replace-with-at-least-32-random-characters
 ```
 
@@ -540,7 +562,7 @@ example certificate paths for the production hostname.
 The app keeps Flasgo's production-oriented security defaults enabled, including:
 
 - allowed-host enforcement
-- CSRF protection
+- HMAC-signed, session-bound CSRF protection
 - secure session and CSRF cookie defaults
 - `no-store` caching on non-public responses
 - default hardening headers such as `X-Frame-Options` and `Strict-Transport-Security`
@@ -580,6 +602,7 @@ The `POST /` handler uses Flasgo's built-in form parsing, and static files are s
 Run the complete test and static-check suite:
 
 ```bash
+PYTHONPATH=. uv run flasgo check wake:base_app
 uv run pytest -q
 uv run ty check
 uv run ruff check .
@@ -594,11 +617,13 @@ Those tests verify:
 - Flasgo's hardened default headers are present on the homepage
 - external CSS and JS assets include `integrity`
 - `/status` returns an ETag and honors conditional requests
+- `/status` uses typed boolean and repeatable refresh query parameters and rejects ambiguous input
 - legacy and extended device configuration is validated and safely reloaded
 - configured packet destinations, ports, interfaces, repeats, and intervals are applied
 - ICMP, TCP, and disabled status probes return structured status details
 - `POST /` supports redirects and a `202` JSON response used for wake verification
 - the installable web app manifest references icons that are actually served
+- static `GET`/`HEAD` responses preserve validators and do not emit framework cookies
 - each device is rendered with its own wake control
 - terminal targets and file paths are validated and never selected by the browser
 - terminal access requires a trusted proxy identity, exact Origin, and CSRF proof

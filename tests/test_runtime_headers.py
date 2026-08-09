@@ -6,10 +6,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
+from flasgo import Flasgo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from wake import MAX_MUTATING_REQUEST_BODY_BYTES, app, metrics_bearer_token_from_env
+from wake import MAX_MUTATING_REQUEST_BODY_BYTES, app, flasgo_secret_key_from_env
 
 ALLOWED_CDN_HOSTS = {'cdnjs.cloudflare.com', 'cdn.jsdelivr.net'}
 LOCAL_PREFIXES = ('/static/', '/', '#')
@@ -116,9 +117,17 @@ def test_flasgo_metrics_require_bearer_token_and_use_bounded_labels() -> None:
     assert 'route="/metrics"' not in metrics.text
 
 
+def test_flasgo_metrics_reject_non_ascii_credentials_without_raising() -> None:
+    response = app.test_client().get('/metrics', headers={'authorization': 'Bearer ' + 'é' * 32})
+
+    assert response.status_code == 401
+    assert response.headers['www-authenticate'] == 'Bearer'
+
+
 @pytest.mark.parametrize(
     'token',
     [
+        None,
         '',
         'a' * 31,
         ' ' + 'a' * 32,
@@ -127,18 +136,31 @@ def test_flasgo_metrics_require_bearer_token_and_use_bounded_labels() -> None:
         'a' * 31 + '!',
     ],
 )
-def test_metrics_bearer_token_rejects_values_that_cannot_authenticate(monkeypatch, token: str) -> None:
-    monkeypatch.setenv('FLASGO_METRICS_TOKEN', token)
+def test_flasgo_07_rejects_invalid_configured_metrics_tokens(token: str | None) -> None:
+    with pytest.raises(ValueError, match='bearer-safe ASCII characters'):
+        Flasgo(
+            settings={
+                'SECRET_KEY': 'wake-test-secret-key-at-least-32-characters',
+                'METRICS_ENABLED': True,
+                'METRICS_BEARER_TOKEN': token,
+            }
+        )
 
-    with pytest.raises(ValueError, match='bearer-safe ASCII characters without whitespace'):
-        metrics_bearer_token_from_env()
+
+@pytest.mark.parametrize('secret_key', ['', 'a' * 31])
+def test_flasgo_secret_key_rejects_missing_or_short_values(monkeypatch, secret_key: str) -> None:
+    monkeypatch.setenv('FLASGO_SECRET_KEY', secret_key)
+
+    with pytest.raises(ValueError, match='FLASGO_SECRET_KEY must contain at least 32 characters'):
+        flasgo_secret_key_from_env()
 
 
-@pytest.mark.parametrize('token', ['a' * 32, 'Ab9._~+/-' * 4, 'a' * 32 + '=='])
-def test_metrics_bearer_token_preserves_valid_values(monkeypatch, token: str) -> None:
-    monkeypatch.setenv('FLASGO_METRICS_TOKEN', token)
+def test_flasgo_secret_key_is_preserved_and_configured(monkeypatch) -> None:
+    secret_key = 'wake+stable.secret/key_value~with=punctuation'
+    monkeypatch.setenv('FLASGO_SECRET_KEY', secret_key)
 
-    assert metrics_bearer_token_from_env() == token
+    assert flasgo_secret_key_from_env() == secret_key
+    assert app.settings.SECRET_KEY == 'wake-test-secret-key-at-least-32-characters'
 
 
 def test_send_mac_uses_form_parsing_and_redirects(monkeypatch) -> None:
@@ -214,6 +236,27 @@ def test_send_mac_accepts_csrf_token_from_form_field(monkeypatch) -> None:
     assert response.status_code == 303
     assert response.location == '/'
     assert sent_packets == ['30:5a:3a:56:57:58']
+
+
+def test_send_mac_rejects_matching_but_unsigned_csrf_tokens(monkeypatch) -> None:
+    client = app.test_client()
+    sent_packets: list[str] = []
+    client.get('/')
+
+    monkeypatch.setattr('wake.send_magic_packet', sent_packets.append)
+    unsigned_token = 'legacy-unsigned-token'
+    response = client.post(
+        '/',
+        data={'computer': 'demo1'},
+        headers={
+            'cookie': f'flasgo-csrf={unsigned_token}',
+            'origin': 'http://localhost',
+            'x-csrf-token': unsigned_token,
+        },
+    )
+
+    assert response.status_code == 403
+    assert sent_packets == []
 
 
 def test_send_mac_accepts_same_origin_cookie_only_csrf(monkeypatch) -> None:
