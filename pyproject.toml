@@ -18,7 +18,7 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "flasgo[metrics]==0.7.0",
+    "flasgo[metrics]==0.8.0",
     "paramiko==5.0.0",
     "wakeonlan==4.0.0",
     "PyYaml==6.0.3",
@@ -28,7 +28,7 @@ dependencies = [
 dev = [
     "pytest==9.1.1",
     "types-PyYAML==6.0.12.20250915",
-    "ruff==0.15.21",
+    "ruff==0.16.3",
 ]
 
 [tool.uv]
