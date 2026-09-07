@@ -23,6 +23,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from pathlib import Path
 
+    from app_metrics import WakeMetrics
+
 
 TERMINAL_SUBPROTOCOL = 'wake-terminal-v1'
 MAX_CLIENT_MESSAGE_BYTES = 16 * 1024
@@ -136,6 +138,7 @@ class TerminalGateway:
         identity_header: str,
         csrf_cookie_name: str,
         local_development: bool = False,
+        metrics: WakeMetrics | None = None,
     ) -> None:
         self._settings_loader = settings_loader
         self.enabled = enabled
@@ -147,6 +150,7 @@ class TerminalGateway:
         self._active_total = 0
         self._active_by_user: defaultdict[str, int] = defaultdict(int)
         self._logger = logging.getLogger('wake.terminal.audit')
+        self._metrics = metrics
 
     def actor(self, scope: Mapping[str, Any]) -> str | None:
         """Return the allowlisted proxy-authenticated actor, if present."""
@@ -251,10 +255,15 @@ class TerminalGateway:
 
         started = time.monotonic()
         outcome = 'failed'
+        if self._metrics is not None:
+            self._metrics.ssh_active.inc()
         self._logger.info('terminal_open actor=%s device=%s source=%s', actor, audit_device, client_ip)
         try:
             await self._run_ssh_session(ssh, columns, rows, password, websocket)
             outcome = 'closed'
+        except asyncio.CancelledError:
+            outcome = 'cancelled'
+            raise
         except HostKeyVerificationError, paramiko.BadHostKeyException:
             outcome = 'host_key_rejected'
             await self._error_and_close(websocket, 'SSH host identity verification failed', 1011)
@@ -278,7 +287,12 @@ class TerminalGateway:
             await self._error_and_close(websocket, 'Terminal session failed', 1011)
         finally:
             self._release(actor)
-            duration = round(time.monotonic() - started, 1)
+            elapsed = time.monotonic() - started
+            if self._metrics is not None:
+                self._metrics.ssh_active.dec()
+                self._metrics.ssh_sessions.labels(outcome=outcome).inc()
+                self._metrics.ssh_duration.observe(elapsed)
+            duration = round(elapsed, 1)
             self._logger.info(
                 'terminal_close actor=%s device=%s source=%s outcome=%s duration_seconds=%s',
                 actor,

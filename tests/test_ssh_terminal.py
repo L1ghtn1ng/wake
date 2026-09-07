@@ -9,6 +9,9 @@ from typing import Any
 import pytest
 from flasgo import WebSocket, WebSocketDisconnect
 from flasgo.testing import WebSocketHandshakeError
+from prometheus_client import CollectorRegistry, generate_latest
+
+from app_metrics import WakeMetrics
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -493,6 +496,61 @@ def test_application_uses_flasgo_websocket_route_and_test_client(monkeypatch) ->
     assert captured == {'ssh': settings, 'columns': 100, 'rows': 40, 'password': None}
     websocket_metrics = [line for line in metrics.text.splitlines() if line.startswith('flasgo_websocket_connections_total{')]
     assert any('route="/ws/terminal"' in line for line in websocket_metrics)
+
+
+@pytest.mark.parametrize(
+    ('failure', 'outcome'),
+    [
+        (None, 'closed'),
+        (ssh_terminal.HostKeyVerificationError, 'host_key_rejected'),
+        (ssh_terminal.paramiko.AuthenticationException, 'authentication_failed'),
+        (TerminalProtocolError, 'protocol_rejected'),
+        (WebSocketDisconnect, 'client_disconnected'),
+        (TimeoutError, 'timed_out'),
+        (OSError, 'connection_failed'),
+        (RuntimeError, 'unexpected_error'),
+        (asyncio.CancelledError, 'cancelled'),
+    ],
+)
+def test_session_metrics_release_active_gauge_on_every_outcome(monkeypatch, failure, outcome) -> None:
+    settings = SSHSettings('private-host', 22, 'private-user', Path('/private-key'), Path('/known'))
+    terminal_gateway = gateway(settings=settings)
+    registry = CollectorRegistry()
+    monkeypatch.setattr(terminal_gateway, '_metrics', WakeMetrics(registry))
+
+    async def session(*args) -> None:
+        assert registry.get_sample_value('wake_ssh_sessions_active') == 1
+        if failure is not None:
+            raise failure
+
+    monkeypatch.setattr(terminal_gateway, '_run_ssh_session', session)
+    events = [{'type': 'websocket.receive', 'text': json.dumps({'type': 'auth', 'csrf': 'correct-token'})}]
+    if failure is asyncio.CancelledError:
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(run_gateway(terminal_gateway, websocket_scope(), events))
+    else:
+        asyncio.run(run_gateway(terminal_gateway, websocket_scope(), events))
+
+    assert registry.get_sample_value('wake_ssh_sessions_active') == 0
+    assert registry.get_sample_value('wake_ssh_sessions_total', {'outcome': outcome}) == 1
+    assert registry.get_sample_value('wake_ssh_session_duration_seconds_count') == 1
+    assert terminal_gateway._active_total == 0
+    assert not terminal_gateway._active_by_user
+    exposed = generate_latest(registry).decode()
+    for private in ('private-host', 'private-user', '/private-key', 'correct-token', 'desktop', 'jay'):
+        assert private not in exposed
+
+
+def test_rejected_terminal_authorization_does_not_count_as_an_ssh_session(monkeypatch) -> None:
+    settings = SSHSettings('host', 22, 'user', Path('/key'), Path('/known'))
+    terminal_gateway = gateway(settings=settings)
+    registry = CollectorRegistry()
+    monkeypatch.setattr(terminal_gateway, '_metrics', WakeMetrics(registry))
+    events = [{'type': 'websocket.receive', 'text': json.dumps({'type': 'auth', 'csrf': 'wrong'})}]
+    asyncio.run(run_gateway(terminal_gateway, websocket_scope(), events))
+    assert registry.get_sample_value('wake_ssh_sessions_active') == 0
+    assert registry.get_sample_value('wake_ssh_session_duration_seconds_count') == 0
+    assert not any(sample.name == 'wake_ssh_sessions_total' for metric in registry.collect() for sample in metric.samples)
 
 
 def test_private_key_must_not_be_group_or_world_readable(tmp_path: Path) -> None:

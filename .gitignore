@@ -163,4 +163,5 @@ ENV/
 .pyre
 .mypy_cache
 computers.yaml
+!tests/fixtures/computers.yaml
 .opencode/

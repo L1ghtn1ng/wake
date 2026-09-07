@@ -59,7 +59,7 @@ WebSocket controls follow the official
 
 Flasgo metrics are always enabled at `/metrics`, and Wake fails startup unless
 `FLASGO_METRICS_TOKEN` contains at least 32 bearer-safe ASCII characters without
-whitespace. Flasgo 0.7 validates that syntax while constructing the application
+whitespace. Flasgo validates that syntax while constructing the application
 and fails closed with `401` for malformed or non-ASCII request credentials. The
 endpoint accepts only `GET` and `HEAD`, returns a Bearer challenge on failed
 authentication, and records the failure as a security event. The metrics
@@ -73,6 +73,28 @@ by labeling HTTP requests with matched route templates instead of raw paths; Wak
 does not add device names, user identities, network addresses, terminal content,
 or credentials as metric labels. Metrics are per process, so monitoring must
 scrape every worker while enforcing aggregate alerting and retention controls.
+
+Wake's application metrics share this protected registry. Packet outcomes count
+send calls, not successful machine wakeups. Probe metrics exclude cached and
+disabled probes. SSH metrics begin after browser authorization and session-slot
+reservation, and release their active gauge on normal exit, failure, or
+cancellation. Collectors expose recorded observations without performing network
+operations during a scrape.
+
+## Route-policy checks
+
+The `Checks` CI workflow compares the framework snapshot with
+`baseline.json` and checks deployment controls using isolated
+settings and ephemeral credentials. Unexpected warnings, route changes, and
+control changes fail the check. Baseline updates require an explicit local
+command and review of the resulting diff; CI never regenerates the baseline.
+
+The exact undeclared-access warnings for `/terminal` and `/ws/terminal` are
+reviewed exceptions because those handlers enforce Wake's custom proxy and
+device authorization. Neither route is declared public. The same CI job runs
+the terminal authorization regressions. Framework snapshots cannot establish
+that custom authorization, proxy configuration, or security-header values are
+correct, and the isolated profile does not validate a live deployment.
 
 ## Session and CSRF signing boundary
 

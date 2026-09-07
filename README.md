@@ -353,6 +353,30 @@ rather than attacker-controlled raw paths, and `/metrics` does not instrument
 itself. Registries and counters are per process, so a multi-worker or multi-host
 deployment must scrape and aggregate every instance.
 
+Wake also registers application metrics in that same protected registry:
+
+| Metric | Labels | Meaning |
+| --- | --- | --- |
+| `wake_packets_total` | `outcome` | Each Wake-on-LAN send call, with `success` or `failure`. A successful send does not establish that the machine woke up. Multiple configured packets are counted individually, including partial failures. |
+| `wake_probes_total` | `type`, `outcome` | Executed ICMP/TCP probes, with `up`, `down`, `error`, or `cancelled`. Cache hits and disabled probes are excluded. |
+| `wake_probe_duration_seconds` | `type` | Histogram of probe elapsed time, including failures and cancellation. |
+| `wake_ssh_sessions_total` | `outcome` | Finished SSH session attempts after browser authorization and session-slot reservation. Includes connection setup failures. |
+| `wake_ssh_sessions_active` | None | Reserved terminal sessions, including connection setup. Released on success, failure, and cancellation. |
+| `wake_ssh_session_duration_seconds` | None | Histogram from session-slot reservation through SSH session cleanup. |
+
+SSH outcomes are `closed`, `host_key_rejected`, `authentication_failed`,
+`protocol_rejected`, `client_disconnected`, `timed_out`, `connection_failed`,
+`unexpected_error`, `cancelled`, or the fallback `failed`. `closed` means the
+session handler returned normally; it does not report the exit status of remote
+commands. Rejections before slot reservation are excluded from these SSH metrics;
+Flasgo's WebSocket metrics and Wake's audit logs cover the earlier stages.
+
+Labels contain only fixed categories, never device names, MAC/IP addresses,
+usernames, paths, credentials, or exception messages. Observations happen during
+application work; scraping does not probe machines or open SSH connections.
+Labelled series appear after their first observation. All values reset when the
+process restarts.
+
 ## Deployment
 
 This project is ASGI-based. The old Apache `mod_wsgi` flow does not apply.
@@ -603,11 +627,46 @@ Run the complete test and static-check suite:
 
 ```bash
 PYTHONPATH=. uv run flasgo check wake:base_app
+uv run --locked scripts/check_policy.py --baseline baseline.json
 uv run pytest -q
 uv run ty check
 uv run ruff check .
 uv run ruff format --check .
 ```
+
+The GitHub Actions `Checks` workflow installs locked dependencies, runs lint and
+format checks, validates route policy, and runs the full test suite, including
+the custom terminal authorization tests. Actions are pinned to commit hashes;
+the job has read-only repository permissions and uses no deployment secrets.
+
+The policy checker combines Flasgo's `check --deploy --json` and `--against`
+comparison with [baseline.json](baseline.json).
+It fails on missing or changed baselines and unexpected deployment issues. Only
+the exact `FG011` warnings for `/terminal` and `/ws/terminal` are accepted: those
+handlers enforce proxy identity and device authorization in Wake. They remain
+undeclared in Flasgo's authorization metadata, and are **not** marked public.
+The homepage, favicon, status, and wake submission routes declare their existing
+public access explicitly; CSRF and host checks still apply.
+
+Checks use an isolated configuration with temporary random credentials, loopback
+allowed hosts, secure cookies, and the terminal enabled for a synthetic
+`policy-review` identity. They ignore inherited `WAKE_*` and `FLASGO_*` settings
+and do not connect to devices. This checks the repository's baseline profile;
+it does not certify a live deployment's environment, proxy, or custom authorization.
+The Flasgo snapshot records security-header names, not their values; the CSP and
+other application-owned controls remain covered by the runtime tests.
+
+After an intentional policy change, inspect the checker output, then explicitly
+regenerate and review the baseline in the same change:
+
+```bash
+uv run --locked scripts/check_policy.py --baseline baseline.json --update
+git diff -- baseline.json
+uv run --locked scripts/check_policy.py --baseline baseline.json
+```
+
+Normal checks never rewrite the baseline. Updating it still requires the
+deployment checks to pass with exactly the two reviewed custom-auth warnings.
 
 Those tests verify:
 

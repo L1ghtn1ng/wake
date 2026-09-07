@@ -1,0 +1,175 @@
+{
+  "controls": {
+    "allowed_hosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "csrf_check_origin": true,
+    "csrf_cookie_secure": true,
+    "csrf_enabled": true,
+    "csrf_require_origin": true,
+    "csrf_trusted_origins": [],
+    "enforce_allowed_hosts": true,
+    "form_fields": 1000,
+    "multipart_parts": 1000,
+    "no_store": true,
+    "rate_limit_backend": "RateLimiter",
+    "rate_limit_capacity": 10000,
+    "request_body_bytes": 1048576,
+    "request_head_bytes": 16384,
+    "request_read_timeout_seconds": 10.0,
+    "security_failure_limit": 50,
+    "security_failure_window_seconds": 60,
+    "security_header_names": [
+      "content-security-policy",
+      "permissions-policy",
+      "referrer-policy",
+      "strict-transport-security",
+      "x-content-type-options",
+      "x-frame-options",
+      "x-xss-protection"
+    ],
+    "security_logging": true,
+    "session_backend": "signed_cookie",
+    "session_cookie_http_only": true,
+    "session_cookie_same_site": "Lax",
+    "session_cookie_secure": true,
+    "validation_depth": 64,
+    "validation_issues": 100,
+    "validation_work": 10000,
+    "websocket_message_bytes": 16384,
+    "websocket_messages_per_minute": 1200,
+    "websocket_missing_origin_allowed": false,
+    "websocket_origin_enforced": true,
+    "websocket_origins": []
+  },
+  "internal_endpoints": {
+    "docs": {
+      "backend": null,
+      "enabled": false,
+      "paths": [
+        "/docs",
+        "/openapi.json"
+      ]
+    },
+    "metrics": {
+      "authentication": "bearer",
+      "enabled": true,
+      "path": "/metrics"
+    }
+  },
+  "routes": [
+    {
+      "authentication": null,
+      "cors": null,
+      "csrf_methods": [],
+      "declared_public": true,
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "name": null,
+      "path": "/",
+      "permissions": [],
+      "protocol": "http",
+      "rate_limits": [],
+      "response_contract": null
+    },
+    {
+      "authentication": null,
+      "cors": null,
+      "csrf_methods": [
+        "POST"
+      ],
+      "declared_public": true,
+      "methods": [
+        "POST"
+      ],
+      "name": null,
+      "path": "/",
+      "permissions": [],
+      "protocol": "http",
+      "rate_limits": [],
+      "response_contract": null
+    },
+    {
+      "authentication": null,
+      "cors": null,
+      "csrf_methods": [],
+      "declared_public": true,
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "name": null,
+      "path": "/favicon.ico",
+      "permissions": [],
+      "protocol": "http",
+      "rate_limits": [],
+      "response_contract": null
+    },
+    {
+      "authentication": null,
+      "cors": null,
+      "csrf_methods": [],
+      "declared_public": true,
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "name": "static:/static",
+      "path": "/static/<path:filename>",
+      "permissions": [],
+      "protocol": "http",
+      "rate_limits": [],
+      "response_contract": null
+    },
+    {
+      "authentication": null,
+      "cors": null,
+      "csrf_methods": [],
+      "declared_public": true,
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "name": null,
+      "path": "/status",
+      "permissions": [],
+      "protocol": "http",
+      "rate_limits": [],
+      "response_contract": null
+    },
+    {
+      "authentication": null,
+      "cors": null,
+      "csrf_methods": [],
+      "declared_public": false,
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "name": null,
+      "path": "/terminal",
+      "permissions": [],
+      "protocol": "http",
+      "rate_limits": [],
+      "response_contract": null
+    },
+    {
+      "authentication": null,
+      "cors": null,
+      "csrf_methods": [],
+      "declared_public": false,
+      "methods": [],
+      "name": null,
+      "path": "/ws/terminal",
+      "permissions": [],
+      "protocol": "websocket",
+      "rate_limits": [],
+      "response_contract": null
+    }
+  ],
+  "schema_version": 1,
+  "scope": "Framework configuration only; custom authorization and middleware require application review."
+}

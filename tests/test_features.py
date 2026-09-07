@@ -218,6 +218,43 @@ def test_icmp_probe_applies_configured_timeout_to_ping_and_wait_for(monkeypatch)
     assert captured['timeout'] == 2.25
 
 
+def test_icmp_timeout_reaps_process_that_already_exited(monkeypatch) -> None:
+    computer = ComputerSettings(
+        name='desktop',
+        mac='00:11:22:33:44:55',
+        ip='192.0.2.10',
+        wake=WakeSettings(),
+        probe=ProbeSettings(type='icmp', host='192.0.2.10', timeout=1),
+    )
+
+    class Process:
+        waits = 0
+        kill_attempted = False
+
+        async def wait(self) -> int:
+            self.waits += 1
+            if self.waits == 1:
+                raise TimeoutError
+            return 1
+
+        def kill(self) -> None:
+            self.kill_attempted = True
+            raise ProcessLookupError
+
+    process = Process()
+
+    async def fake_create_subprocess_exec(*command: str, **options: Any) -> Process:
+        return process
+
+    monkeypatch.setattr(wake.asyncio, 'create_subprocess_exec', fake_create_subprocess_exec)
+
+    result = asyncio.run(Computers.check_status(computer))
+
+    assert result.state == 'DOWN'
+    assert process.kill_attempted
+    assert process.waits == 2
+
+
 def test_status_cache_can_refresh_one_device_or_all_devices(monkeypatch) -> None:
     computer = ComputerSettings(
         name='desktop',
@@ -470,10 +507,16 @@ def test_status_uses_typed_query_binding_and_documents_it(monkeypatch) -> None:
 
 
 def test_status_etag_is_a_quoted_entity_tag_that_revalidates(monkeypatch) -> None:
+    async def fake_statuses(*, force: set[str] | None = None) -> dict[str, StatusResult]:
+        return {'demo1': StatusResult('UP', '2026-07-16T12:00:00+00:00', 2.5, None)}
+
+    # ETag validation needs stable data and must not depend on live network probes.
+    monkeypatch.setattr(Computers, 'get_all_statuses', staticmethod(fake_statuses))
     monkeypatch.setattr(wake, '_status_refresh_time', {})
     client = app.test_client()
 
     response = client.get('/status')
+    assert response.status_code == 200
     etag = response.headers['etag']
 
     assert etag.startswith('"')

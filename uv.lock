@@ -201,16 +201,16 @@ wheels = [
 
 [[package]]
 name = "flasgo"
-version = "0.8.0"
+version = "0.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/98/45/a55c7a5cda531089ec434ed195315b90b821c7358e1df84fa356cece37cd/flasgo-0.8.0.tar.gz", hash = "sha256:447074283c31742104b74f9726024dd788c3259f8e4f5675269adcec1ddede5d", size = 215781, upload-time = "2026-08-13T22:09:16.697Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/bf/0a6b360b15f8c43c44721bbcae1ea7b777926d1adc39165a11c6a7a3f29f/flasgo-0.9.1.tar.gz", hash = "sha256:6bf29c9e9afcff45abcc2f87ae94cf1f6a38d821f1406e4a4e35e8274c2ba018", size = 307204, upload-time = "2026-09-06T23:26:20.442Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/c4/0346630e671c4044603c7d954d7e9b1eb345ed3052a0f26028c8d4f6e91c/flasgo-0.8.0-py3-none-any.whl", hash = "sha256:93d8a59ade13975b11386e294c44b3d01dd0d0cfee943550109b1469f74c7cef", size = 110161, upload-time = "2026-08-13T22:09:15.278Z" },
+    { url = "https://files.pythonhosted.org/packages/65/51/0f00a1f0c12c27f0569763345ec0ead92c26a484ba514a19e6bc7cec60d6/flasgo-0.9.1-py3-none-any.whl", hash = "sha256:97bb4f078ea94a946ad64fea31c82d68c49d0626a16fbb4905e3014df5c81a14", size = 157410, upload-time = "2026-09-06T23:26:19.038Z" },
 ]
 
 [package.optional-dependencies]
@@ -500,15 +500,15 @@ wheels = [
 
 [[package]]
 name = "uvicorn"
-version = "0.52.1"
+version = "0.52.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "h11" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/03/18/ccce41535dee1be77735592bd19965f3972c82e07ee703d324709496b716/uvicorn-0.52.1.tar.gz", hash = "sha256:112ec661814189acbccd3f7b86460147cc065fc92c0821afa78918780e4354dd", size = 100571, upload-time = "2026-08-01T18:19:30.732Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/0f/3f86e61397dd33bf2ccf28188c40db6a740658aeebbbf6e7dbc101a1f487/uvicorn-0.52.4.tar.gz", hash = "sha256:73acfee47a0b133c5de13d219492d62d8a31e935f4fe6e41a232451a15379f86", size = 100627, upload-time = "2026-08-19T06:27:41.821Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/d5/68e6e9bca63c0badf67002890a46d3784c958de45b65e1275ec583ca1f06/uvicorn-0.52.1-py3-none-any.whl", hash = "sha256:e4403f9d93188cf9d1088e9f40e3acd12630e2df8675316704379a7fc20fff6a", size = 79859, upload-time = "2026-08-01T18:19:29.294Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/79/4a20b54ab0491485ccd8c077db2d39187c7f12b3e15485d38a7be37c81b4/uvicorn-0.52.4-py3-none-any.whl", hash = "sha256:f86e41a149d7d05a9969337e3946a9c171c06a5d42680896daaba624aeac8da1", size = 79871, upload-time = "2026-08-19T06:27:40.36Z" },
 ]
 
 [package.optional-dependencies]
@@ -548,6 +548,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "flasgo", extra = ["metrics"] },
     { name = "paramiko" },
+    { name = "prometheus-client" },
     { name = "pyyaml" },
     { name = "wakeonlan" },
 ]
@@ -561,8 +562,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flasgo", extras = ["metrics"], specifier = "==0.8.0" },
+    { name = "flasgo", extras = ["metrics"], specifier = "==0.9.1" },
     { name = "paramiko", specifier = "==5.0.0" },
+    { name = "prometheus-client", specifier = "==0.26.0" },
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "wakeonlan", specifier = "==4.0.0" },
 ]

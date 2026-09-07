@@ -23,6 +23,7 @@ from flasgo import Flasgo, Query, Request, Response, Settings, WebSocket, redire
 from wakeonlan import create_magic_packet
 from wakeonlan import wake as send_magic_packet
 
+from app_metrics import WakeMetrics
 from http_utils import (
     CLIENT_IP_SCOPE_KEY,
     decode_headers,
@@ -535,6 +536,10 @@ base_app = Flasgo(
     static_folder=STATIC_DIR,
 )
 base_app.configure_templates(BASE_DIR / 'templates')
+metrics_registry = base_app.metrics_registry
+if metrics_registry is None:
+    raise RuntimeError('Wake requires the Flasgo metrics registry')
+metrics = WakeMetrics(metrics_registry)
 TRUSTED_PROXIES = parse_csv_env('WAKE_TRUST_PROXY_IPS') or {'127.0.0.1', '::1'}
 TERMINAL_IDENTITY_HEADER = os.getenv('WAKE_TERMINAL_IDENTITY_HEADER', 'X-Wake-User').strip()
 if not re.fullmatch(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+", TERMINAL_IDENTITY_HEADER):
@@ -555,6 +560,7 @@ terminal_gateway = TerminalGateway(
     identity_header=TERMINAL_IDENTITY_HEADER,
     csrf_cookie_name=base_app.security.csrf_cookie_name,
     local_development=TERMINAL_LOCAL_DEVELOPMENT,
+    metrics=metrics,
 )
 app = ProxyHeadersMiddleware(
     base_app,
@@ -922,7 +928,13 @@ class Computers:
             send_options['interface'] = wake.interface
 
         for packet_number in range(wake.packets):
-            send_magic_packet(computer.mac, **send_options)
+            try:
+                send_magic_packet(computer.mac, **send_options)
+            except Exception:
+                metrics.wake_packets.labels(outcome='failure').inc()
+                raise
+            else:
+                metrics.wake_packets.labels(outcome='success').inc()
             if packet_number + 1 < wake.packets and wake.interval_ms:
                 await asyncio.sleep(wake.interval_ms / 1000)
 
@@ -961,6 +973,27 @@ class Computers:
 
     @staticmethod
     async def check_status(computer: ComputerSettings) -> StatusResult:
+        """Measure actual probes without counting cache hits or disabled probes."""
+        probe = computer.probe
+        if probe.type == 'none' or probe.host is None:
+            return await Computers._check_status(computer)
+
+        started = time.perf_counter()
+        probe_type = 'icmp' if probe.type == 'icmp' else 'tcp'
+        outcome = 'error'
+        try:
+            result = await Computers._check_status(computer)
+            outcome = {'UP': 'up', 'DOWN': 'down'}.get(result.state, 'error')
+            return result
+        except asyncio.CancelledError:
+            outcome = 'cancelled'
+            raise
+        finally:
+            metrics.probes.labels(type=probe_type, outcome=outcome).inc()
+            metrics.probe_duration.labels(type=probe_type).observe(time.perf_counter() - started)
+
+    @staticmethod
+    async def _check_status(computer: ComputerSettings) -> StatusResult:
         """Run the configured probe and return structured status details."""
         probe = computer.probe
         checked_at = datetime.now(UTC).isoformat()
@@ -984,7 +1017,9 @@ class Computers:
                 state = 'UP' if process.returncode == 0 else 'DOWN'
             except TimeoutError:
                 if process is not None:
-                    process.kill()
+                    # Ping may exit between the timeout and the kill signal.
+                    with suppress(ProcessLookupError):
+                        process.kill()
                     with suppress(Exception):
                         await process.wait()
             except FileNotFoundError:
@@ -1054,7 +1089,7 @@ class Computers:
         return {name: results[name] for name in computers}
 
 
-@app.get('/')
+@app.get('/', public=True)
 async def homepage(request: Request) -> Response:
     """Render main webpage"""
     try:
@@ -1076,7 +1111,7 @@ async def homepage(request: Request) -> Response:
     )
 
 
-@app.get('/favicon.ico')
+@app.get('/favicon.ico', public=True)
 async def favicon(request: Request) -> Response:
     """Serve the conventional favicon URL used as a browser fallback."""
     return Response(
@@ -1122,7 +1157,7 @@ async def terminal_websocket(websocket: WebSocket) -> None:
     await terminal_gateway(websocket)
 
 
-@app.post('/')
+@app.post('/', public=True)
 async def send_mac(request: Request) -> Response:
     """Handle wake-on-lan request"""
     form_data = await request.form()
@@ -1163,7 +1198,7 @@ async def send_mac(request: Request) -> Response:
     return redirect('/', status_code=303)
 
 
-@app.get('/status')
+@app.get('/status', public=True)
 async def get_status(
     request: Request,
     details: Annotated[bool, Query()] = False,
