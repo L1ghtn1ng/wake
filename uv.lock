@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -201,16 +201,16 @@ wheels = [
 
 [[package]]
 name = "flasgo"
-version = "0.9.1"
+version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "watchfiles" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/bf/0a6b360b15f8c43c44721bbcae1ea7b777926d1adc39165a11c6a7a3f29f/flasgo-0.9.1.tar.gz", hash = "sha256:6bf29c9e9afcff45abcc2f87ae94cf1f6a38d821f1406e4a4e35e8274c2ba018", size = 307204, upload-time = "2026-09-06T23:26:20.442Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/17/2a/60cdc2e5f96d3e609cc007da3c3ec6aa4e6150b033373ae124714ea21e59/flasgo-0.11.0.tar.gz", hash = "sha256:ac75232e933202553f380a025d9cec4bf81c1e9c5417752aee01244fc705117e", size = 297709, upload-time = "2026-10-18T22:29:04.234Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/51/0f00a1f0c12c27f0569763345ec0ead92c26a484ba514a19e6bc7cec60d6/flasgo-0.9.1-py3-none-any.whl", hash = "sha256:97bb4f078ea94a946ad64fea31c82d68c49d0626a16fbb4905e3014df5c81a14", size = 157410, upload-time = "2026-09-06T23:26:19.038Z" },
+    { url = "https://files.pythonhosted.org/packages/91/3d/152aa2d9a044e265ad3f1b9d62b9e33bbc8b12a157548e9bd4c580ebfb77/flasgo-0.11.0-py3-none-any.whl", hash = "sha256:232a04f8a3c160f292cc79d1cf1c6bbe8d946025bdd861ae87d48bedd4bb0489", size = 178585, upload-time = "2026-10-18T22:29:02.737Z" },
 ]
 
 [package.optional-dependencies]
@@ -562,7 +562,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flasgo", extras = ["metrics"], specifier = "==0.9.1" },
+    { name = "flasgo", extras = ["metrics"], specifier = "==0.11.0" },
     { name = "paramiko", specifier = "==5.0.0" },
     { name = "prometheus-client", specifier = "==0.26.0" },
     { name = "pyyaml", specifier = "==6.0.3" },

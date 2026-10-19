@@ -18,7 +18,7 @@ classifiers = [
     "Topic :: System :: Systems Administration",
 ]
 dependencies = [
-    "flasgo[metrics]==0.9.1",
+    "flasgo[metrics]==0.11.0",
     "paramiko==5.0.0",
     "prometheus-client==0.26.0",
     "wakeonlan==4.0.0",
